@@ -333,15 +333,29 @@ def cmd_init(_args):
             write_json(p(f), default)
     emit({"ok": True, "home": home()})
 
+def _read_text(src):
+    """Read text from a file path, or stdin when src == '-'."""
+    if src == "-":
+        return sys.stdin.read()
+    with open(src, "r", encoding="utf-8") as f:
+        return f.read()
+
 def load_payload(args):
+    # --file/--json may be '-' to read from stdin — the safe channel for learner
+    # text, so tutors never interpolate free-text into a shell command line.
     if getattr(args, "file", None):
-        obj = read_json(args.file)
-        if obj is None:
-            die("cannot read JSON file: %s" % args.file)
-        return obj
-    if getattr(args, "json", None):
         try:
-            return json.loads(args.json)
+            raw = _read_text(args.file)
+        except OSError:
+            die("cannot read file: %s" % args.file)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            die("bad JSON in %s: %s" % (args.file, e))
+    if getattr(args, "json", None) is not None:
+        raw = _read_text("-") if args.json == "-" else args.json
+        try:
+            return json.loads(raw)
         except json.JSONDecodeError as e:
             die("bad --json: %s" % e)
     die("provide --json or --file")
@@ -643,20 +657,28 @@ def apply_item(item, kind):
     return result
 
 def cmd_rate(args):
+    production = args.production
+    if getattr(args, "production_file", None):
+        try:
+            production = _read_text(args.production_file)
+        except OSError:
+            die("cannot read --production-file: %s" % args.production_file)
     item = {"topic": args.topic, "node": args.node, "rating": args.rating,
-            "confidence": args.confidence, "production": args.production,
+            "confidence": args.confidence, "production": production,
             "grade": args.grade, "probe": args.probe, "source": args.source}
     emit(apply_item(item, args.kind))
 
 def cmd_receipt(args):
     payload = load_payload(args)
     items = payload if isinstance(payload, list) else [payload]
-    results = []
+    # Validate every item AND confirm every node exists before applying ANY, so a
+    # bad item (e.g. a hallucinated node id) can't half-apply the batch.
     for item in items:
-        for key in ("topic", "node", "rating"):
-            if key not in item:
-                die("receipt item missing %s: %s" % (key, json.dumps(item)[:120]))
-        results.append(apply_item(item, item.get("kind", "encode")))
+        validate_item(item)
+        g = load_graph(item["topic"])
+        if item["node"] not in g.get("nodes", {}):
+            die("unknown node %s in topic %s" % (item["node"], item["topic"]))
+    results = [apply_item(item, item.get("kind", "encode")) for item in items]
     emit(results)
 
 def cmd_stash(args):
@@ -668,7 +690,12 @@ def cmd_stash(args):
             for key in ("topic", "node", "probe", "production"):
                 if key not in item:
                     die("stash item missing %s" % key)
+            require_slug(item["topic"])
             item.setdefault("ts", today().isoformat())
+            prod = item.get("production") or ""
+            if len(prod) > PRODUCTION_MAX:   # bound stash growth (matches receipt cap)
+                item["production"] = prod[:PRODUCTION_MAX]
+                item["production_truncated"] = True
             append_jsonl(path, item)
         emit({"ok": True, "pending": len(read_jsonl(path))})
     elif args.action == "list":
@@ -681,6 +708,14 @@ def cmd_stash(args):
         except FileNotFoundError:
             pass
         emit({"ok": True, "pending": 0})
+
+# known numeric leaf keys -> (lo, hi) clamp, so a typo can't wreck the scheduler
+MODEL_NUMERIC_BOUNDS = {
+    "memory.desired_retention": (RETENTION_MIN, RETENTION_MAX),
+    "memory.interval_multiplier": (MULTIPLIER_MIN, MULTIPLIER_MAX),
+    "challenge_band.target_success": (0.0, 1.0),
+    "challenge_band.hint_budget": (0, 8),
+}
 
 def cmd_model(args):
     m = load_model()
@@ -699,17 +734,36 @@ def cmd_model(args):
                     continue
             if raw in ("true", "false"):
                 val = (raw == "true")
-            ref = m
             parts = key.split(".")
             if parts[0] not in m:
                 die("unknown model key: %s" % parts[0])
+            # walk to the parent, refusing to traverse or clobber a container
+            ref = m
             for part in parts[:-1]:
-                ref = ref.setdefault(part, {})
-            ref[parts[-1]] = val
+                nxt = ref.get(part) if isinstance(ref, dict) else None
+                if nxt is None:
+                    nxt = ref[part] = {}
+                elif not isinstance(nxt, dict):
+                    die("cannot set %s: %r is not an object" % (key, part))
+                ref = nxt
+            leaf = parts[-1]
+            if isinstance(ref.get(leaf), (dict, list)) and not isinstance(val, (dict, list)):
+                die("refusing to overwrite object/list key %r with a scalar — "
+                    "set a leaf field instead (e.g. %s.<field>=value)" % (leaf, key))
+            bounds = MODEL_NUMERIC_BOUNDS.get(key)
+            if bounds is not None:
+                if not isinstance(val, (int, float)) or isinstance(val, bool):
+                    die("%s expects a number in [%s, %s]" % (key, bounds[0], bounds[1]))
+                val = clamp(val, bounds[0], bounds[1])
+            ref[leaf] = val
             changed = True
     for interest in (args.add_interest or []):
         if interest not in m["interests"]:
             m["interests"].append(interest)
+            changed = True
+    for goal in (getattr(args, "add_goal", None) or []):
+        if goal not in m["goals"]:
+            m["goals"].append(goal)
             changed = True
     if changed:
         write_json(p("learner-model.json"), m)
@@ -719,16 +773,20 @@ def cmd_misconception(args):
     path = p("misconceptions.json")
     items = read_json(path, [])
     if args.action == "add":
-        items.append({"id": "m_%d_%03d" % (int(time.time() * 1000), next(_SEQ)),
+        items.append({"id": gen_id("m"),
                       "ts": today().isoformat(), "topic": args.topic,
                       "node": args.node, "description": args.description,
                       "status": "open"})
         write_json(path, items)
     elif args.action == "resolve":
+        found = False
         for it in items:
-            if it["id"] == args.id:
+            if it.get("id") == args.id:
                 it["status"] = "resolved"
                 it["resolved_ts"] = today().isoformat()
+                found = True
+        if not found:
+            die("no misconception with id %s" % args.id)
         write_json(path, items)
     emit([it for it in items if args.topic in (None, it.get("topic"))])
 
@@ -740,15 +798,20 @@ def cmd_experiment(args):
         for key in ("question", "arms", "metric"):
             if key not in exp:
                 die("experiment missing %s" % key)
-        exp.update({"id": "x_%d" % int(time.time() * 1000),
+        if not isinstance(exp["arms"], list) or len(exp["arms"]) < 2:
+            die("experiment needs an arms list with at least 2 arms")
+        if any(e.get("status") == "active" for e in items):
+            die("an experiment is already active — settle it before starting another "
+                "(one active experiment at a time; see /coach)")
+        exp.update({"id": gen_id("x"),
                     "started": today().isoformat(), "status": "active",
                     "assignments": [], "verdict": None})
         items.append(exp)
         write_json(path, items)
         emit(exp)
     elif args.action == "assign":
-        active = [e for e in items if e["status"] == "active"]
-        if not active:
+        active = [e for e in items if e.get("status") == "active"]
+        if not active or not active[0].get("arms"):
             emit({"arm": None, "note": "no active experiment"})
             return
         exp = active[0]
@@ -758,8 +821,10 @@ def cmd_experiment(args):
         write_json(path, items)
         emit({"id": exp["id"], "arm": arm})
     elif args.action == "settle":
+        if not any(exp.get("id") == args.id for exp in items):
+            die("no experiment with id %s" % args.id)
         for exp in items:
-            if exp["id"] == args.id:
+            if exp.get("id") == args.id:
                 exp["status"] = "settled"
                 exp["verdict"] = args.verdict
                 exp["settled"] = today().isoformat()
@@ -781,7 +846,7 @@ def collect_receipts():
     return out
 
 def compute_streak(receipts):
-    dayset = {r["ts"] for r in receipts}
+    dayset = {r.get("ts") for r in receipts if r.get("ts")}
     cursor = today()
     if cursor.isoformat() not in dayset:
         cursor -= timedelta(days=1)  # grace: today isn't over yet
@@ -791,11 +856,38 @@ def compute_streak(receipts):
         cursor -= timedelta(days=1)
     return streak
 
+def _outcome(r):
+    """The correctness signal for calibration: prefer the assessor grade (what the
+    learner actually got right), falling back to the scheduler rating. A `partial`
+    (grade) / `hard` (rating) is real partial credit, not a total miss."""
+    g = r.get("grade")
+    if g in OUTCOME_OF_GRADE:
+        return OUTCOME_OF_GRADE[g]
+    rating = r.get("rating")
+    grade = GRADE_OF_RATING.get(rating)
+    return OUTCOME_OF_GRADE.get(grade) if grade else None
+
+def _calibration(rs):
+    pairs = []
+    for r in rs:
+        c = clean_confidence(r.get("confidence"))
+        o = _outcome(r)
+        if c is not None and o is not None:
+            pairs.append((c / 100.0, o))
+    if not pairs:
+        return {"brier": None, "bias": None, "n": 0, "read": None}
+    brier = round(sum((c - o) ** 2 for c, o in pairs) / len(pairs), 4)
+    bias = round(sum(c - o for c, o in pairs) / len(pairs), 4)
+    read = ("insufficient-data" if len(pairs) < CAL_MIN_N else
+            "overconfident" if bias > 0.05 else
+            "underconfident" if bias < -0.05 else "well-calibrated")
+    return {"brier": brier, "bias": bias, "n": len(pairs), "read": read}
+
 def compute_stats():
     receipts = collect_receipts()
     reviews = [r for r in receipts if r.get("kind") == "review" and r.get("rating")]
     def bucket(r):
-        s = r.get("s_before") or 0
+        s = as_number(r.get("s_before")) or 0
         return "early" if s < 7 else ("week" if s < 30 else "month+")
     buckets = {}
     for r in reviews:
@@ -805,29 +897,22 @@ def compute_stats():
         agg[0] += ok
         agg[1] += 1
     recall = {b: {"rate": round(v[0] / v[1], 3), "n": v[1]} for b, v in buckets.items() if v[1]}
-    graded = [r for r in receipts if r.get("confidence") is not None and r.get("rating")]
-    brier = bias = None
-    if graded:
-        pairs = [((r["confidence"] / 100.0), (1.0 if r["rating"] in ("good", "easy") else 0.0))
-                 for r in graded]
-        brier = round(sum((c - o) ** 2 for c, o in pairs) / len(pairs), 4)
-        bias = round(sum(c - o for c, o in pairs) / len(pairs), 4)
+    # Calibrate on review recall only; first-exposure (encode) guesses are a
+    # separate, noisier signal — reported alongside, never pooled into the verdict.
+    with_conf = [r for r in receipts if r.get("confidence") is not None]
+    calibration = _calibration([r for r in with_conf if r.get("kind") == "review"])
+    calibration_encode = _calibration([r for r in with_conf if r.get("kind") != "review"])
     topics = []
-    for t in all_topics():
-        g = load_graph(t)
-        states = {}
-        for node in g["nodes"].values():
-            states[node["state"]] = states.get(node["state"], 0) + 1
-        topics.append({"topic": t, "title": g.get("title"), "states": states})
+    for t, g in iter_graphs():
+        topics.append({"topic": t, "title": g.get("title"), "states": state_counts(g)})
     sessions = read_jsonl(p("sessions.jsonl"))
-    last_coach = max((s["ts"] for s in sessions if s.get("kind") == "coach"), default=None)
+    last_coach = max((s.get("ts") for s in sessions if s.get("kind") == "coach" and s.get("ts")),
+                     default=None)
     return {
         "receipts": len(receipts), "reviews": len(reviews),
         "recall_by_stability": recall,
-        "calibration": {"brier": brier, "bias": bias, "n": len(graded),
-                        "read": (None if bias is None else
-                                 ("overconfident" if bias > 0.05 else
-                                  "underconfident" if bias < -0.05 else "well-calibrated"))},
+        "calibration": calibration,
+        "calibration_encode": calibration_encode,
         "streak_days": compute_streak(receipts),
         "due_now": len(due_items()),
         "pending_verify": len(read_jsonl(p(STASH_FILE))),
@@ -844,10 +929,8 @@ STATE_DOTS = {"review": "●", "learning": "◐", "new": "·"}
 
 def cmd_topic_status(args):
     g = load_graph(args.topic)
-    counts = {"review": 0, "learning": 0, "new": 0}
-    for node in g["nodes"].values():
-        counts[node["state"]] = counts.get(node["state"], 0) + 1
-    total = len(g["nodes"])
+    counts = state_counts(g)
+    total = max(1, len(g["nodes"]))
     width = 24
     filled = int(round(width * counts["review"] / total))
     half = int(round(width * counts["learning"] / total))
@@ -856,12 +939,15 @@ def cmd_topic_status(args):
              "%s  %d retained · %d learning · %d untouched" % (
                  bar, counts["review"], counts["learning"], counts["new"]), ""]
     for nid in g["order"]:
-        node = g["nodes"][nid]
-        due = node["fsrs"].get("due") or "—"
-        s = node["fsrs"].get("s")
+        node = g["nodes"].get(nid)
+        if node is None:
+            continue
+        fsrs = node.get("fsrs", {})
+        due = fsrs.get("due") or "—"
+        s = as_number(fsrs.get("s"))
         flags = ("†" if node.get("threshold") else "") + ("*" if node.get("arbitrary") else "")
         lines.append("%s %-34s%-2s due %-10s S=%s" % (
-            STATE_DOTS.get(node["state"], "?"), nid, flags, due,
+            STATE_DOTS.get(node.get("state"), "?"), nid, flags, due,
             ("%.1fd" % s) if s else "—"))
     lines.append("")
     lines.append("● retained (review)   ◐ learning   · untouched   † threshold   * memorize-only")
@@ -877,7 +963,12 @@ def cmd_session_start(_args):
     if due:
         by_topic = {}
         for d in due:
-            by_topic[d["topic"]] = by_topic.get(d["topic"], 0) + 1
+            # Only ever echo validated slugs into hook output — this text is injected
+            # into the agent's context; a free-form topic name would be a prompt-
+            # injection vector. (Slugs are already enforced at ingest; belt-and-braces.)
+            t = d.get("topic")
+            if slug_ok(t):
+                by_topic[t] = by_topic.get(t, 0) + 1
         summary = ", ".join("%s: %d" % kv for kv in sorted(by_topic.items(), key=lambda x: -x[1])[:3])
         minutes = max(1, round(len(due) * 0.6))
         print("[engram] %d review%s due (%s) · ~%d min · /review to clear, /learn to continue."
@@ -886,8 +977,10 @@ def cmd_session_start(_args):
         print("[engram] %d production%s awaiting assessor grading — /learn or /review will finish verification."
               % (pending, "s" if pending != 1 else ""))
     sessions = read_jsonl(p("sessions.jsonl"))
-    last_coach = max((s["ts"] for s in sessions if s.get("kind") == "coach"), default=None)
-    if last_coach and (today() - date.fromisoformat(last_coach)).days > 7:
+    last_coach = max((s.get("ts") for s in sessions if s.get("kind") == "coach" and s.get("ts")),
+                     default=None)
+    lc = safe_date(last_coach)
+    if lc and (today() - lc).days > 7:
         print("[engram] coach check-in overdue (last: %s) · /coach when convenient." % last_coach)
 
 def cmd_path(_args):
@@ -906,6 +999,10 @@ def cmd_refit(args):
                 if r.get("kind") == "review" and r.get("rating")
                 and r.get("retrievability") is not None]
     n = len(receipts)
+    if n == 0:
+        emit({"ok": False, "reason": "no review receipts with predictions yet",
+              "hint": "keep reviewing; refit is meaningful only with real evidence"})
+        return
     if n < 50 and not args.force:
         emit({"ok": False, "reason": "need >=50 review receipts with predictions, have %d" % n,
               "hint": "keep reviewing; refit is meaningful only with real evidence"})
@@ -947,17 +1044,31 @@ def cmd_doctor(_args):
     info["topics"] = len(topics)
     node_count = 0
     for t in topics:
-        g = read_json(p("graphs", t + ".json"))
+        g = read_json(p("graphs", t + ".json"), quarantine=False)
         if g is None:
-            issues.append("graph unreadable: %s" % t)
+            issues.append("graph unreadable/corrupt: %s (fix or delete graphs/%s.json)" % (t, t))
             continue
         node_count += len(g.get("nodes", {}))
         for nid in g.get("order", []):
             if nid not in g.get("nodes", {}):
                 issues.append("%s: order references missing node %s" % (t, nid))
         for nid, node in g.get("nodes", {}).items():
-            if node.get("state") != "new" and not node.get("fsrs", {}).get("due"):
-                issues.append("%s/%s: state=%s but no due date" % (t, nid, node.get("state")))
+            st = node.get("state")
+            if st not in NODE_STATES:
+                issues.append("%s/%s: invalid state %r" % (t, nid, st))
+            due = node.get("fsrs", {}).get("due")
+            if st != "new" and not due:
+                issues.append("%s/%s: state=%s but no due date" % (t, nid, st))
+            elif due and safe_date(due) is None:
+                issues.append("%s/%s: unparseable due date %r" % (t, nid, due))
+    # surface quarantined corrupt files so the user knows state was preserved, not lost
+    corrupt = []
+    for sub in ("", "graphs"):
+        d = p(sub) if sub else home()
+        if os.path.isdir(d):
+            corrupt += [os.path.join(sub, f) for f in os.listdir(d) if ".corrupt." in f]
+    if corrupt:
+        issues.append("quarantined corrupt files present: %s" % ", ".join(sorted(corrupt)))
     info["nodes"] = node_count
     info["receipts"] = len(collect_receipts())
     info["pending_verify"] = len(read_jsonl(p(STASH_FILE)))
@@ -1029,31 +1140,36 @@ def cmd_report(args):
     parts.append("<div class='chips'>" + "".join(
         "<span class='chip'>%s <b>%s</b></span>" % (escape(k), escape(v)) for k, v in chips) + "</div>")
 
-    for t in all_topics():
-        g = load_graph(t)
-        counts = {"review": 0, "learning": 0, "new": 0}
-        for node in g["nodes"].values():
-            counts[node["state"]] += 1
+    for t, g in iter_graphs():
+        counts = state_counts(g)
         total = max(1, len(g["nodes"]))
         seg = lambda n, color: ("<span style='width:%.1f%%;background:var(--%s)'></span>"
                                 % (100.0 * n / total, color)) if n else ""
         parts.append("<div class='card'><h2 style='margin:0'>%s</h2>" % escape(g.get("title") or t))
         if g.get("goal"):
-            parts.append("<p class='goal'>goal: %s</p>" % escape(g["goal"]))
+            parts.append("<p class='goal'>goal: %s</p>" % escape(str(g["goal"])))
         parts.append("<div class='bar'>%s%s</div>" % (seg(counts["review"], "good"),
                                                       seg(counts["learning"], "warn")))
         parts.append("<p class='legend'>%d retained · %d learning · %d untouched</p>"
                      % (counts["review"], counts["learning"], counts["new"]))
         rows = []
         for nid in g["order"]:
-            node = g["nodes"][nid]
+            node = g["nodes"].get(nid)
+            if node is None:
+                continue
+            st = node.get("state", "new")
+            if st not in STATE_DOTS:
+                st = "new"
+            fsrs = node.get("fsrs", {})
             flags = ("<span class='flag'>†</span>" if node.get("threshold") else "") + \
                     ("<span class='flag'>*</span>" if node.get("arbitrary") else "")
-            s = node["fsrs"].get("s")
+            s = as_number(fsrs.get("s"))
+            lapses = fsrs.get("lapses", 0)
+            # every interpolated value is escape()d — node fsrs is attacker-settable
             rows.append("<tr><td class='dot-%s'>%s</td><td>%s %s</td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
-                node["state"], STATE_DOTS[node["state"]], escape(nid), flags,
-                ("%.1fd" % s) if s else "—", node["fsrs"].get("due") or "—",
-                node["fsrs"].get("lapses", 0) or ""))
+                st, STATE_DOTS[st], escape(nid), flags,
+                ("%.1fd" % s) if s else "—", escape(str(fsrs.get("due") or "—")),
+                escape(str(lapses)) if lapses else ""))
         parts.append("<table><tr><th></th><th>concept</th><th>stability</th><th>due</th>"
                      "<th>lapses</th></tr>%s</table></div>" % "".join(rows))
 
@@ -1114,6 +1230,13 @@ def cmd_report(args):
                  "</span> · Engram never sends data anywhere.</footer></main>" % escape(home()))
 
     out_path = args.out or p("artifacts", "dashboard.html")
+    if args.out and not getattr(args, "allow_outside", False):
+        # Confine to the state dir by default so a prompt-injected --out can't drop
+        # an HTML file into an arbitrary location; --allow-outside is the opt-in.
+        base = os.path.realpath(home())
+        if not os.path.realpath(out_path).startswith(base + os.sep):
+            die("refusing to write outside the state dir: %s (pass --allow-outside to override)"
+                % out_path)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("<!doctype html>\n" + "\n".join(parts) + "\n")
@@ -1180,7 +1303,12 @@ def cmd_selftest(_args):
               and g2["nodes"]["a"]["state"] == "learning")
         stats = _capture_json(cmd_stats, _ns())
         check("stats computes calibration", stats["calibration"]["brier"] is not None)
-        check("stats flags overconfident lapse", stats["calibration"]["read"] == "overconfident")
+        # n=1 review -> verdict suppressed (min-n guard); the encode confidence is
+        # split into its own pool, not pooled into the review verdict.
+        check("calibration verdict suppressed below min-n",
+              stats["calibration"]["read"] == "insufficient-data")
+        check("encode confidence split from review calibration",
+              stats["calibration"]["n"] == 1 and stats["calibration_encode"]["n"] == 1)
 
         # receipt ids unique within a fast batch
         batch = [{"topic": "t", "node": "a", "rating": "good"},
@@ -1237,6 +1365,275 @@ def cmd_selftest(_args):
         os.environ.pop("ENGRAM_HOME", None)
         os.environ.pop("ENGRAM_TODAY", None)
 
+    # ============ 0.3.0 hardening regression checks (each in its own home) ======
+
+    # -- FSRS-4.5 difficulty anchor: Good at D0(3) is a fixed point (issue #1.1) --
+    check("difficulty reverts to D0(3) (FSRS-4.5 anchor)",
+          approx(next_difficulty(init_difficulty(3), 3), init_difficulty(3), 0.001))
+    check("difficulty anchor is NOT D0(4)",
+          not approx(next_difficulty(init_difficulty(4), 3), init_difficulty(4), 0.001))
+
+    # -- calibration outcome from grade, not rating (issue #2.1) --
+    check("partial is half credit, not a total miss", _outcome({"grade": "partial"}) == 0.5)
+    check("hard rating falls back to half credit",
+          _outcome({"rating": "hard"}) == 0.5 and _outcome({"rating": "good"}) == 1.0)
+    cal_partial = _calibration([{"confidence": 90, "grade": "partial", "rating": "hard"}])
+    check("hard/partial @90 is not maxed to +0.9 bias",
+          cal_partial["bias"] == 0.4 and cal_partial["brier"] < 0.2)
+    # -- min-n verdict floor (issue #2.2) --
+    check("calibration below min-n reads insufficient-data",
+          _calibration([{"confidence": 80, "grade": "recalled"}])["read"] == "insufficient-data")
+    over = _calibration([{"confidence": 90, "grade": "lapsed"}] * CAL_MIN_N)
+    check("calibration at >=min-n yields a verdict",
+          over["read"] == "overconfident" and over["n"] == CAL_MIN_N)
+
+    # -- confidence coercion is safe and bounded (R8/N3) --
+    check("confidence clamped and typed",
+          clean_confidence(150) == 100 and clean_confidence(-20) == 0
+          and clean_confidence("high") is None and clean_confidence(0.9) == 1)
+
+    # -- slug guard (R5 traversal) --
+    check("slug accepts real topics",
+          slug_ok("transformers-attention") and slug_ok("t") and slug_ok("a.b_c"))
+    check("slug rejects traversal/abs/hidden",
+          not slug_ok("../pwned") and not slug_ok("/etc/x")
+          and not slug_ok(".hidden") and not slug_ok("a/b") and not slug_ok(""))
+
+    def raises(fn, *a, **k):
+        import io, contextlib
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                fn(*a, **k)
+            return False
+        except SystemExit:
+            return True
+
+    def fresh(fn):
+        with tempfile.TemporaryDirectory() as h:
+            os.environ["ENGRAM_HOME"] = h
+            os.environ["ENGRAM_TODAY"] = "2026-07-06"
+            try:
+                _capture(cmd_init, _ns())
+                return fn(h)
+            finally:
+                os.environ.pop("ENGRAM_HOME", None)
+                os.environ.pop("ENGRAM_TODAY", None)
+
+    def _add_ab(replace=False):
+        g = {"topic": "t", "title": "T", "order": ["a", "b"], "nodes": {
+            "a": {"claim": "A", "probe": "pa"},
+            "b": {"claim": "B", "probe": "pb", "edges": {"requires": ["a"]}}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g), replace=replace))
+
+    # -- refit --force with zero receipts no longer divides by zero (issue #1.3) --
+    check("refit --force on empty data is graceful",
+          fresh(lambda h: _capture_json(cmd_refit, _ns(force=True))["ok"] is False))
+
+    # -- add-topic rejects a traversal slug and writes nothing outside home (R5) --
+    def _traversal(h):
+        bad = {"topic": "../pwned", "title": "x", "order": ["a"],
+               "nodes": {"a": {"claim": "c", "probe": "p"}}}
+        rejected = raises(cmd_add_topic, _ns(json=json.dumps(bad)))
+        outside = os.path.exists(os.path.join(os.path.dirname(h), "pwned.json"))
+        return rejected and not outside
+    check("add-topic rejects traversal slug, writes nothing outside home", fresh(_traversal))
+
+    # -- add-topic ignores payload-supplied mastery (issue: mastery without receipt) --
+    def _no_free_mastery(h):
+        g = {"topic": "t", "title": "T", "order": ["a"], "nodes": {"a": {
+            "claim": "c", "probe": "p", "state": "review",
+            "fsrs": {"s": 99.0, "d": 5.0, "due": "2030-01-01", "last": "2029-01-01",
+                     "reps": 7, "lapses": 0}}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g)))
+        node = load_graph("t")["nodes"]["a"]
+        return node["state"] == "new" and node["fsrs"]["s"] is None
+    check("add-topic strips payload-supplied state/fsrs (no mastery without receipts)",
+          fresh(_no_free_mastery))
+
+    # -- add-topic --replace preserves surviving node schedule (H4 data loss) --
+    def _replace_preserves(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled", kind="encode"))
+        s_before = load_graph("t")["nodes"]["a"]["fsrs"]["s"]
+        g = {"topic": "t", "title": "T2", "order": ["a", "b", "c"], "nodes": {
+            "a": {"claim": "A", "probe": "pa"}, "b": {"claim": "B", "probe": "pb"},
+            "c": {"claim": "C", "probe": "pc"}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g), replace=True))
+        s_after = load_graph("t")["nodes"]["a"]["fsrs"]["s"]
+        return s_before is not None and s_after == s_before
+    check("add-topic --replace preserves surviving node schedule", fresh(_replace_preserves))
+
+    # -- next skips a stashed node AND advances past a stashed prereq (issue #2.4/R3b) --
+    def _stash_aware_next(h):
+        _add_ab()
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "ans a"})))
+        nx = _capture_json(cmd_next, _ns(topic="t"))
+        stash_b = _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "b", "probe": "pb", "production": "ans b"})))
+        nx2 = _capture_json(cmd_next, _ns(topic="t"))
+        return (nx["id"] == "b" and nx.get("provisional_requires") == ["a"]
+                and nx2["id"] is None and nx2["pending_verify"] == 2)
+    check("next skips stashed node and provisionally clears stashed prereq",
+          fresh(_stash_aware_next))
+
+    # -- applying a receipt self-drains the stash (F3 adjacent) --
+    def _stash_self_clean(h):
+        _add_ab()
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "ans a"})))
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled", kind="encode"))
+        return _capture_json(cmd_stash, _ns(action="count"))["pending"] == 0
+    check("applying a receipt self-drains the matching stash entry", fresh(_stash_self_clean))
+
+    # -- receipt batch is atomic: a bad item commits nothing (R6/H2) --
+    def _batch_atomic(h):
+        _add_ab()
+        batch = [{"topic": "t", "node": "a", "rating": "good"},
+                 {"topic": "t", "node": "NOPE", "rating": "good"}]
+        rejected = raises(cmd_receipt, _ns(json=json.dumps(batch)))
+        reps = load_graph("t")["nodes"]["a"]["fsrs"].get("reps", 0)
+        return rejected and reps == 0
+    check("receipt batch is atomic (bad item commits nothing)", fresh(_batch_atomic))
+
+    # -- receipt is written before state advances (issue #1.2/S2) --
+    def _receipt_first(h):
+        _add_ab()
+        gl = globals()
+        orig = gl["append_jsonl"]
+        def boom(*a, **k):
+            raise OSError("simulated crash writing receipt")
+        gl["append_jsonl"] = boom
+        try:
+            _capture(cmd_rate, _ns(topic="t", node="a", rating="good",
+                                   grade="recalled", kind="encode"))
+        except OSError:
+            pass
+        finally:
+            gl["append_jsonl"] = orig
+        node = load_graph("t")["nodes"]["a"]
+        return node["state"] == "new" and node["fsrs"]["s"] is None
+    check("receipt write precedes state advance (crash costs only a re-review)",
+          fresh(_receipt_first))
+
+    # -- model --set can't clobber a dict with a scalar or wreck the scheduler (R4/R7) --
+    def _model_guard(h):
+        rejected = raises(cmd_model, _ns(set=["memory=5"]))
+        still_works = isinstance(_capture_json(cmd_model, _ns())["memory"], dict)
+        _capture(cmd_model, _ns(set=["memory.desired_retention=0"]))
+        ret = _capture_json(cmd_model, _ns())["memory"]["desired_retention"]
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", kind="encode"))  # must not crash
+        return rejected and still_works and RETENTION_MIN <= ret <= RETENTION_MAX
+    check("model --set refuses dict-clobber and clamps retention", fresh(_model_guard))
+
+    # -- learner model self-heals a deleted subtree (M12) --
+    def _model_heal(h):
+        _capture(cmd_model, _ns(add_interest=["keepme"]))
+        mfile = os.path.join(h, "learner-model.json")
+        data = read_json(mfile); del data["interests"]; write_json(mfile, data)
+        healed = _capture_json(cmd_model, _ns())
+        return isinstance(healed.get("interests"), list)
+    check("learner model self-heals a deleted key", fresh(_model_heal))
+
+    # -- --add-goal writes the orphan field (issue #2.5) --
+    def _add_goal(h):
+        _capture(cmd_model, _ns(add_goal=["ship it", "ship it"]))
+        goals = _capture_json(cmd_model, _ns())["goals"]
+        return goals == ["ship it"]
+    check("model --add-goal appends (dedup) to the goals list", fresh(_add_goal))
+
+    # -- corrupt learner-model.json is quarantined, not silently discarded (issue #1.4) --
+    def _corrupt_model(h):
+        _capture(cmd_model, _ns(add_interest=["keepme"]))
+        with open(os.path.join(h, "learner-model.json"), "w") as f:
+            f.write("{not valid json")
+        _capture(cmd_model, _ns())  # triggers load_model -> quarantine + rebuild
+        backups = [f for f in os.listdir(h) if f.startswith("learner-model.json.corrupt.")]
+        return len(backups) == 1
+    check("corrupt learner model is quarantined to .corrupt", fresh(_corrupt_model))
+
+    # -- one corrupt graph doesn't brick aggregate views or the hook (R9) --
+    def _corrupt_graph(h):
+        _add_ab()
+        with open(os.path.join(h, "graphs", "zbad.json"), "w") as f:
+            f.write("{broken")
+        ok = True
+        for fn in (cmd_topics, cmd_stats, cmd_session_start):
+            try:
+                _capture(fn, _ns())
+            except SystemExit:
+                ok = False
+        return ok
+    check("corrupt graph is skipped by aggregate views (no crash)", fresh(_corrupt_graph))
+
+    # -- malformed dates and ghost order ids survive read paths (N1/N2) --
+    def _bad_state_survives(h):
+        g = {"topic": "t", "title": "T", "order": ["a", "ghost"], "nodes": {"a": {
+            "claim": "c", "probe": "p"}}}
+        # write directly to bypass add-topic validation (simulate hand-edit/corruption)
+        _capture(cmd_add_topic, _ns(json=json.dumps(
+            {"topic": "t", "title": "T", "order": ["a"], "nodes": {"a": {"claim": "c", "probe": "p"}}})))
+        gf = os.path.join(h, "graphs", "t.json")
+        data = read_json(gf)
+        data["order"] = ["a", "ghost"]
+        data["nodes"]["a"]["state"] = "review"
+        data["nodes"]["a"]["fsrs"] = {"s": 3.0, "d": 5.0, "due": "NOT-A-DATE",
+                                      "last": "bad", "reps": 1, "lapses": 0}
+        write_json(gf, data)
+        ok = True
+        for fn, ns in ((cmd_topics, _ns()), (cmd_due, _ns()),
+                       (cmd_topic_status, _ns(topic="t")), (cmd_report, _ns()),
+                       (cmd_next, _ns(topic="t"))):
+            try:
+                _capture(fn, ns)
+            except (SystemExit, KeyError, ValueError):
+                ok = False
+        return ok
+    check("ghost order id + malformed dates survive every read path", fresh(_bad_state_survives))
+
+    # -- experiment guards: >=2 arms, one active at a time (SEC-06) --
+    def _experiment_guard(h):
+        empty = raises(cmd_experiment, _ns(action="start",
+                       json=json.dumps({"question": "q", "arms": [], "metric": "m"})))
+        _capture(cmd_experiment, _ns(action="start", json=json.dumps(
+            {"question": "q", "arms": ["x", "y"], "metric": "m"})))
+        second = raises(cmd_experiment, _ns(action="start", json=json.dumps(
+            {"question": "q2", "arms": ["x", "y"], "metric": "m"})))
+        return empty and second
+    check("experiment requires >=2 arms and one active at a time", fresh(_experiment_guard))
+
+    # -- report --out is confined to home unless --allow-outside (SEC-08) --
+    def _out_confined(h):
+        outside = os.path.join(os.path.dirname(h), "escape.html")
+        blocked = raises(cmd_report, _ns(out=outside))
+        allowed = _capture_json(cmd_report, _ns(out=outside, allow_outside=True))
+        try:
+            os.remove(outside)
+        except OSError:
+            pass
+        return blocked and allowed["ok"] is True
+    check("report --out confined to home unless --allow-outside", fresh(_out_confined))
+
+    # -- production truncation is flagged, not silent (issue #2.6) --
+    r_trunc = make_receipt({"topic": "t", "node": "a", "rating": "good",
+                            "production": "x" * (PRODUCTION_MAX + 50)}, {}, "encode")
+    check("long production is truncated with a marker",
+          len(r_trunc["production"]) == PRODUCTION_MAX and r_trunc.get("production_truncated") is True)
+
+    # -- due --limit 0 means zero, not "all" (N6) --
+    def _limit_zero(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-09-01"
+        return len(due_items(limit=0)) == 0 and len(due_items()) >= 1
+    check("due --limit 0 returns nothing (not everything)", fresh(_limit_zero))
+
+    # -- ids carry pid and never collide in a batch --
+    check("generated ids embed pid and are unique",
+          str(os.getpid()) in gen_id("r") and gen_id("r") != gen_id("r"))
+
     print("\n%d/%d checks passed" % (total[0] - len(failures), total[0]))
     sys.exit(1 if failures else 0)
 
@@ -1245,11 +1642,12 @@ def _ns(**kw):
         pass
     ns = NS()
     defaults = dict(topic=None, node=None, rating=None, confidence=None,
-                    production=None, grade=None, probe=None, source="self",
-                    kind="review", json=None, file=None, replace=False,
-                    limit=None, set=None, add_interest=None, action=None,
+                    production=None, production_file=None, grade=None, probe=None,
+                    source="self", kind="review", json=None, file=None, replace=False,
+                    limit=None, set=None, add_interest=None, add_goal=None, action=None,
                     id=None, verdict=None, description=None, force=False,
-                    out=None, mode=None, minutes=None, items=None, notes=None)
+                    out=None, allow_outside=False, mode=None, minutes=None,
+                    items=None, notes=None)
     defaults.update(kw)
     for k, v in defaults.items():
         setattr(ns, k, v)
@@ -1289,7 +1687,8 @@ def main():
     sp = sub.add_parser("rate")
     sp.add_argument("--topic", required=True); sp.add_argument("--node", required=True)
     sp.add_argument("--rating", required=True, choices=sorted(RATINGS))
-    sp.add_argument("--confidence", type=int); sp.add_argument("--production")
+    sp.add_argument("--confidence", type=int)
+    sp.add_argument("--production"); sp.add_argument("--production-file")
     sp.add_argument("--grade", choices=GRADES); sp.add_argument("--probe")
     sp.add_argument("--source", default="self"); sp.add_argument("--kind", default="review")
 
@@ -1303,6 +1702,7 @@ def main():
     sp = sub.add_parser("model")
     sp.add_argument("--set", action="append")
     sp.add_argument("--add-interest", action="append")
+    sp.add_argument("--add-goal", action="append")
 
     sp = sub.add_parser("misconception")
     sp.add_argument("action", choices=("add", "list", "resolve"))
@@ -1323,7 +1723,7 @@ def main():
     sp.add_argument("--force", action="store_true")
 
     sp = sub.add_parser("report")
-    sp.add_argument("--out")
+    sp.add_argument("--out"); sp.add_argument("--allow-outside", action="store_true")
 
     args = ap.parse_args()
     handlers = {
