@@ -196,7 +196,7 @@ Yes — the engine doesn't care. History, music theory, statistics, anatomy (it 
 Say "just tell me" — it complies immediately, no lecture. It also quietly schedules that concept for earlier review, because told-not-derived decays faster. Your call, honestly priced.
 
 **Where's my data?**
-`~/.claude/learning/` — learner model, concept graphs, grade receipts, misconception log, artifacts. Human-readable JSON. Nothing ever leaves your machine.
+`~/.claude/learning/` — learner model, concept graphs, grade receipts, misconception log, artifacts. Human-readable JSON. Your learning **state never leaves your machine**: the engine (`engram.py`) is stdlib-only with no network code, and the dashboard is a local file. The one exception is the curriculum architect, which uses web search on the *topic and goal you give it* when building a new map — so keep secrets out of the goal line, or ask for an offline map. (Override the location with `ENGRAM_HOME`.)
 
 **Why does it keep testing me?**
 Because retrieval is the treatment, not the measurement. A century of memory research in four words: testing is the learning.
