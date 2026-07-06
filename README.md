@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.0-6D4AA8.svg" alt="Version 0.2.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-6D4AA8.svg" alt="Version 0.3.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/selftest-33%2F33-3E7D5A.svg" alt="33/33 checks">
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
