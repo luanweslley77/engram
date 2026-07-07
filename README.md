@@ -278,4 +278,16 @@ Two sibling plugins share Engram's discipline — deterministic cores, blind gra
 
 ---
 
+## Star History
+
+<a href="https://star-history.com/#nagisanzenin/engram&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=nagisanzenin/engram&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=nagisanzenin/engram&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=nagisanzenin/engram&type=Date" />
+ </picture>
+</a>
+
+---
+
 <sub>*An <b>engram</b> is the physical trace a memory leaves in neural tissue (Semon, 1904; experimentally located by Josselyn, Tonegawa et al. in the 2010s). Building durable ones is literally this plugin's job.* · MIT license · [changelog](CHANGELOG.md)</sub>
