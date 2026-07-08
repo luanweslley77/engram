@@ -267,6 +267,15 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 | [docs/03-architecture.md](docs/03-architecture.md) | State schemas, the five loops, agent separation of powers, the Explorable Contract, adaptation policy |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Phased plan with measurable exit criteria, metrics, risks, and the ten-article constitution |
 
+## More from the same workshop
+
+Five Claude Code plugins from the same workshop. Most share one habit: *let a deterministic core decide, and never let the producer of work grade it.*
+
+- **[effortmining](https://github.com/nagisanzenin/effortmining)** — benchmark-calibrated per-subagent reasoning effort: dispatch the cheapest tier a blind grader still accepts. ~64.7% fewer output tokens at equal quality, pre-registered.
+- **[idiolect](https://github.com/nagisanzenin/idiolect)** — human-voice writing engine: 60+ measured voices plus a deterministic AI-tell scanner and a blind auditor, so text reads like a person, not a model.
+- **[production-grade](https://github.com/nagisanzenin/claude-code-production-grade-plugin)** — turns "build me X" into a gated multi-agent pipeline (architecture → tests → security → CI/CD) with a receipt for every phase. Engram's verification patterns started here.
+- **[less](https://github.com/nagisanzenin/less)** — a minimal comms protocol for Claude: a per-turn hook makes replies answer-first, pick-list-driven, and calm, without touching the work.
+
 ---
 
 ## More from the same workshop
