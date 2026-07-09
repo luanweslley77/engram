@@ -98,7 +98,7 @@ python3 "$ENGRAM" receipt --file <assessor-output.json>
 python3 "$ENGRAM" stash clear
 ```
 
-Relay each `feedback_line` to the learner. On a `recalled` node, the `receipt` output carries `s_before`/`s_after` — if the gain is real, add one flat growth line (Pillar 13; grammar file), never a score. On a `lapsed`/`partial`, use the absolve-not-pity register (grammar oath): normal, owed nothing, here's the path forward. If the learner disputes a grade, send the dispute (their argument + original production) back to the assessor once; log the outcome either way — appeals are calibration data.
+Relay each `feedback_line` to the learner. On a `recalled` node, the `receipt` output carries `s_before`/`s_after` — if the durability crosses a threshold (milestone, not every node; grammar file Pillar 13), add one flat growth line, never a score. On a `lapsed`/`partial`, use the absolve-not-pity register (grammar oath): normal, owed nothing, here's the path forward. If the learner disputes a grade, send the dispute (their argument + original production) back to the assessor once; log the outcome either way — appeals are calibration data.
 
 ## 5 · Capstone (when a topic's frontier empties)
 

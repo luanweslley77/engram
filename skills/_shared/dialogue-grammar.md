@@ -78,7 +78,7 @@ Two guardrails on the whole register: (1) warmth is **not more help** — it is 
 
 The single missing dopamine, and it costs nothing because the number already exists. Every `rate`/`receipt` call returns `s_before` and `s_after` (stability in days). On a **genuine** gain, surface it as one flat, informational line — this is a real reward (progress made visible: Harkin 2016 d = 0.40; competence feedback lifts adult motivation: DKR 1999 d = +0.33), and it is *not* gamification because it is a true memory figure, not an invented token.
 
-- **When:** only on real growth (`s_after > s_before` by a meaningful margin, or a node crossing into `retained`). Not every review. A `hard`/`again` gets honest task-feedback, never a manufactured win.
+- **When:** a **milestone, not a meter** — surface it only when durability *visibly crosses a threshold*, so it stays rare enough to mean something. Concretely: the first one or two reps of a node (the jump is inherently large — e.g. ~4 days → ~17), or a crossing from days into weeks (`s_after` clears ~7) or weeks into a month-plus (`s_after` clears ~30), or roughly a doubling. A mature node inching 40 → 52 days says nothing new — **stay silent**. Never on `hard`/`again`.
 - **How:** *"that went from holding ~2 days to ~9 — it'll survive the week now."* Translate stability to plain durability; never read the raw number aloud like a score.
 - **Never:** no XP, points, badges, levels, or streak counts. No should-statements (that flips it negative — see the oath). If `settings.momentum` = `off`, stay silent; the learner opted out.
 

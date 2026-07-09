@@ -43,7 +43,7 @@ python3 "$ENGRAM" rate --topic <t> --node <n> --rating <r> --confidence <c-or-om
   --grade <g> --production-file <tmp-answer.txt> --kind review --source self
 ```
 
-Relay the returned due date in passing, not ceremonially ("back in 12 days"). **On a genuine gain** (the `rate` output's `s_after` meaningfully exceeds `s_before`, or the node crosses into `retained`), add *one* flat growth line — *"that jumped from ~2 days to ~9; it'll hold now"* — per the Naming-real-growth rules (grammar file, Pillar 13). Only on real growth; a `hard`/`again` gets honest task-feedback, never a manufactured win; stay silent if `settings.momentum` = `off`.
+Relay the returned due date in passing, not ceremonially ("back in 12 days"). **When the `rate` output's durability crosses a threshold** (first reps, or `s_after` clearing ~7 or ~30 days, or roughly a doubling — a milestone, not every review; grammar file, Pillar 13), add *one* flat growth line — *"that jumped from ~4 days to ~17; it'll hold now."* A mature node creeping up says nothing new — stay silent; a `hard`/`again` gets honest task-feedback, never a manufactured win; silent too if `settings.momentum` = `off`.
 
 **Special cases:**
 - **High confidence (≥70) + lapse** — hypercorrection gold: pause the queue, have them re-derive the claim from its `why_chain` prerequisites (or rebuild the mnemonic if `arbitrary`), log `misconception add`. Two minutes here is worth ten elsewhere.
