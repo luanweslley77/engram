@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.4 — 2026-07-09 · fix the confidence picker not firing (contradiction in the oath)
+
+0.4.3 added the imperative picker instruction but a stale line survived in the most-obeyed
+section — the anti-sycophancy **oath** still read *"Confidence in the same breath as the
+probe"*, which tells the tutor to ask for a number inline (the "Answer + 0-100" a user saw
+on 0.4.3). It overrode the new rule. The ⚠ section and beats were updated in 0.4.2/0.4.3;
+this oath line was missed.
+
+### Behavior (dialogue grammar; no engine change)
+- The oath line is replaced with **"Confidence is a picker, never a typed number"**, and
+  the **reveal is now gated on it**: no canonical answer until confidence is collected via
+  `AskUserQuestion` (or a volunteered number, or dismissed → null). Gating on the reveal —
+  an action the tutor always performs — is the most reliable way to make the tool call fire,
+  versus a standalone "please call the picker".
+- Removed every remaining "answer + 0–100 / gut number" cue from probe-prompt guidance.
+
 ## 0.4.3 — 2026-07-09 · make the confidence picker actually fire
 
 0.4.2 described the confidence picker but left the instruction too soft and framed it
