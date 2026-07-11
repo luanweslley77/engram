@@ -43,6 +43,10 @@ FACTOR = 19.0 / 81.0  # chosen so R(t=S) = 0.9
 
 RATINGS = {"again": 1, "hard": 2, "good": 3, "easy": 4}
 GRADES = ("recalled", "partial", "lapsed")
+# Receipt kinds. Every v0.6 metric keys off the exact literal "review", so an
+# invented kind would be permanently invisible — and receipts are append-only, so
+# it could never be corrected. Validated at ingest; a bad batch dies before any write.
+KINDS = ("encode", "review", "pretest", "transfer", "audit")
 NODE_STATES = ("new", "learning", "review")
 # grade <-> rating are a bijection (dialogue-grammar rating map); used for the
 # calibration outcome fallback and grade/rating mismatch warnings.
@@ -814,10 +818,15 @@ def validate_item(item):
         if key not in item:
             die("receipt item missing %s: %s" % (key, json.dumps(item)[:120]))
     require_slug(item["topic"])
-    if item["rating"] not in RATINGS:
+    if not isinstance(item["rating"], str) or item["rating"] not in RATINGS:
         die("bad rating %r (use again|hard|good|easy)" % item["rating"])
     if item.get("grade") is not None and item["grade"] not in GRADES:
         die("bad grade %r (use recalled|partial|lapsed)" % item["grade"])
+    k = item.get("kind")
+    if k is not None and k not in KINDS:
+        die("bad kind %r (use %s) — an invented kind is invisible to every metric and "
+            "receipts are append-only, so it could never be corrected"
+            % (k, "|".join(KINDS)))
 
 def drop_stash(topic, node):
     """Remove applied (topic, node) entries so the stash self-drains as receipts land."""
@@ -901,13 +910,25 @@ def apply_item(item, kind):
     # one-pass query over the receipt log instead of a join against the graph. On first
     # exposure there is no prior receipt, so this is 0 by construction.
     enc_ts = _first_receipt_ts(item["topic"], item["node"])
-    extra = {**extra, "days_since_encode": (days_between(enc_ts, today().isoformat()) or 0)
-                                            if enc_ts else 0}
+    dse = days_between(enc_ts, today().isoformat()) if enc_ts else 0
+    # clamp: a backward clock step (or a hand-edited ts) would otherwise stamp a
+    # negative elapsed-day count into an append-only receipt, permanently.
+    extra = {**extra, "days_since_encode": max(0, dse or 0)}
     receipt = make_receipt(item, {**extra, "due_next": node["fsrs"]["due"]}, kind)
     append_jsonl(p("receipts", item["topic"] + ".jsonl"), receipt)
     _cache_receipt(item["topic"], receipt)   # a duplicate sid later in THIS batch must still be caught
     save_graph(g)
-    drop_stash(item["topic"], item["node"])
+    # Drain ONLY the stash entry this receipt settles. v0.6.0 fixed this on the rare
+    # idempotent-no-op branch and left it broken on the branch that runs EVERY time: a node
+    # can legitimately hold two stashed productions (a re-attempt, a second pass, a session
+    # resumed after a park — `stash add` appends without deduping on node), and draining by
+    # (topic, node) silently destroyed the newer, never-graded one. A learner's real work,
+    # gone, with no trace. Sid-less receipts (the legacy bare-`rate` path, which never had a
+    # stash entry to lose) keep the old self-drain.
+    if isinstance(sid, str) and sid:
+        drop_stash_sid(item["topic"], sid)
+    else:
+        drop_stash(item["topic"], item["node"])
     result = {"node": item["node"], "rating": rating, "state": node["state"],
               "due": node["fsrs"]["due"], "applied": True, **extra}
     if item.get("grade") and GRADE_OF_RATING.get(rating) != item["grade"]:
@@ -1513,22 +1534,32 @@ def compute_retention():
         if b["n"]:
             b["rate"] = round((b["recalled"] + b["partial"]) / b["n"], 3)
 
-    # Came due, never reviewed. Their recall is UNKNOWN — not absent — and FSRS can
-    # project it, which is the only honest thing that can be said about them.
-    stale, proj = 0, []
+    # THE HONEST DENOMINATOR: everything that is PAST DUE RIGHT NOW.
+    #
+    # v0.6.0 shipped this as "past due AND never reviewed", which exempted a node the moment
+    # it was retrieved even once — so a learner who reviewed ten concepts at day 7 and then
+    # vanished for 200 days saw: "measured over 10 retrievals · 100% recall · unmeasured 0 ·
+    # coverage complete · the loop is closing", while the engine's own `decay` put those same
+    # ten at 56% and falling. Survivorship bias with a progress bar, reproduced INSIDE the
+    # block written to prevent it. (Found by adversarial review, after release.)
+    #
+    # A node that is past due NOW has, by definition, not been retrieved since it came due.
+    # Its current recall is UNKNOWN — not absent — whatever its history. That, and only that,
+    # is the population a retention figure silently drops.
+    stale, never, proj = 0, 0, []
     for tp, g in iter_graphs():
         for nid, node in (g.get("nodes") or {}).items():
             if not isinstance(node, dict):
                 continue
-            slot = nodes.get((tp, nid))
-            if slot is not None and slot["reviews"]:
-                continue                       # it was reviewed: it is measured, not stale
             f = _fsrs_of(node)
             s, due, last = (as_number(f.get("s")), safe_date(f.get("due")),
                             safe_date(f.get("last")))
             if s is None or due is None or due > t:
-                continue                       # never encoded, or not yet due
+                continue                       # never encoded, or not yet due: nothing owed
             stale += 1
+            slot = nodes.get((tp, nid))
+            if slot is None or not slot["reviews"]:
+                never += 1                     # never retrieved at all — the worst case
             if last:
                 proj.append(retrievability(max(0, (t - last).days), s))
 
@@ -1542,9 +1573,16 @@ def compute_retention():
         read = ("measured over %d retrieval%s — none yet at the 30-day mark"
                 % (bucketed, "s" if bucketed != 1 else ""))
     else:
-        read = "insufficient-data (no reviews yet)" + (
-            " — and %d concept%s past due, decaying unmeasured"
-            % (stale, "s" if stale != 1 else "") if stale else "")
+        read = "insufficient-data (no reviews yet)"
+    # The unmeasured denominator must reach the NARRATOR, not just sit in a nested key. A
+    # `read` of "measured over 10 retrievals" while ten concepts rot past due is the exact
+    # lie this block exists to prevent — and v0.6.0 told it. Every read now carries the debt.
+    if stale:
+        read += (" — but %d concept%s %s past due and unretrieved (FSRS: ~%d%% recall now); "
+                 "%s not in the number above"
+                 % (stale, "s" if stale != 1 else "", "are" if stale != 1 else "is",
+                    round((sum(proj) / len(proj) if proj else 0) * 100),
+                    "they are" if stale != 1 else "it is"))
     # The coverage guard is worthless if nothing reads it. If the windows ever stop
     # partitioning [0, inf), the metric is silently discarding evidence — and it must SAY so
     # in the one field a narrator is guaranteed to read, not merely record it in a nested key
@@ -1568,11 +1606,12 @@ def compute_retention():
             "complete": bucketed == total_reviews,
         },
         "unmeasured": {
-            "past_due_never_reviewed": stale,
+            "past_due_now": stale,             # ← the honest denominator
+            "never_reviewed": never,           # of those, never retrieved even once
             "projected_recall_now": (round(sum(proj) / len(proj), 3) if proj else None),
-            "note": ("UNKNOWN, not absent. These came due and were never reviewed. Reporting "
-                     "retention without them is survivorship bias — they are exactly the "
-                     "concepts that decayed."),
+            "note": ("UNKNOWN, not absent. These are past due RIGHT NOW — not retrieved since "
+                     "they came due, whatever their history. Reporting retention without them "
+                     "is survivorship bias: they are exactly the concepts that decayed."),
         },
         "read": read,
     }
@@ -1750,6 +1789,8 @@ def cmd_commit(args):
     not a reminder system, it is the learner's own sentence repeated to them (docs/07 §4)."""
     m = load_model()
     before = m["settings"].get("commitment")
+    if args.clear and (args.cue or args.action):
+        die("commit: --clear cannot be combined with --cue/--action (which did you mean?)")
     if args.clear:
         m["settings"]["commitment"] = None
     elif args.cue or args.action:
@@ -2132,14 +2173,14 @@ def cmd_report(args):
     else:
         parts.append("<p class='note'>%s</p>" % escape(ret["read"]))
     u = ret["unmeasured"]
-    if u["past_due_never_reviewed"]:
-        parts.append("<p class='note' style='color:var(--bad)'><b>%d concept%s came due and "
-                     "were never reviewed.</b> They are <b>not</b> in the numbers above — their "
-                     "recall is <i>unknown, not absent</i>, and FSRS puts them near <b>%d%%</b> "
-                     "right now. A retention figure that quietly drops them is survivorship "
-                     "bias with a progress bar.</p>"
-                     % (u["past_due_never_reviewed"],
-                        "s" if u["past_due_never_reviewed"] != 1 else "",
+    if u["past_due_now"]:
+        parts.append("<p class='note' style='color:var(--bad)'><b>%d concept%s past due and "
+                     "unretrieved right now</b> (%d never reviewed at all). They are <b>not</b> "
+                     "in the numbers above — their recall is <i>unknown, not absent</i>, and "
+                     "FSRS puts them near <b>%d%%</b>. A retention figure that quietly drops "
+                     "them is survivorship bias with a progress bar.</p>"
+                     % (u["past_due_now"], "s" if u["past_due_now"] != 1 else "",
+                        u["never_reviewed"],
                         int(round((u["projected_recall_now"] or 0) * 100))))
     if not ret["coverage"]["complete"]:
         parts.append("<p class='note' style='color:var(--bad)'><b>%s</b></p>"
@@ -2634,10 +2675,10 @@ def cmd_selftest(_args):
         r = _capture_json(cmd_retention, _ns())
         os.environ["ENGRAM_TODAY"] = "2026-07-06"
         u = r["unmeasured"]
-        return (u["past_due_never_reviewed"] == 1
+        return (u["past_due_now"] == 1 and u["never_reviewed"] == 1
                 and 0.0 < u["projected_recall_now"] < 1.0     # real FSRS projection
                 and "survivorship" in u["note"]
-                and "decaying unmeasured" in r["read"])
+                and "past due and unretrieved" in r["read"])
     check("retention: unmeasured block counts past-due-never-reviewed (no survivorship bias)",
           fresh(_retention_unmeasured))
 
@@ -2651,7 +2692,7 @@ def cmd_selftest(_args):
                                kind="review", production="x"))
         r = _capture_json(cmd_retention, _ns())
         os.environ["ENGRAM_TODAY"] = "2026-07-06"
-        return r["unmeasured"]["past_due_never_reviewed"] == 0
+        return r["unmeasured"]["past_due_now"] == 0
     check("retention: a reviewed node leaves the unmeasured pool",
           fresh(_retention_unmeasured_clears))
 
@@ -2902,6 +2943,79 @@ def cmd_selftest(_args):
                 and "survivorship bias" in low)
     check("dashboard leads with loop_closure and voices the unmeasured denominator",
           fresh(_dashboard_shows_the_loop))
+    # ===== v0.6.2: four defects found in RELEASED code by an independent reviewer =====
+
+    # -- HIGH: the NORMAL apply path must not destroy a second, ungraded production --
+    # v0.6.0 fixed this on the rare idempotent branch and left it live on the branch that runs
+    # every single settle. A node can hold two stashed productions (re-attempt, park/resume);
+    # draining by (topic, node) silently deleted the newer, never-graded one.
+    def _settle_preserves_sibling_production(h):
+        _add_ab()
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "P1"})))
+        sid1 = _capture_json(cmd_stash, _ns(action="list"))[0]["sid"]
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "P2 never graded"})))
+        write_json(os.path.join(h, "g.json"),
+                   [{"topic": "t", "node": "a", "rating": "good", "grade": "recalled",
+                     "kind": "encode", "sid": sid1, "production": "P1"}])
+        _capture(cmd_receipt, _ns(file=os.path.join(h, "g.json")))       # the NORMAL path
+        left = _capture_json(cmd_stash, _ns(action="list"))
+        return len(left) == 1 and left[0]["production"] == "P2 never graded"
+    check("a normal settle drains only its own sid (a sibling ungraded production survives)",
+          fresh(_settle_preserves_sibling_production))
+
+    # -- HIGH: `unmeasured` is PAST-DUE-NOW, not "never reviewed" --
+    # v0.6.0 exempted a node the moment it was retrieved once. A learner who reviewed ten
+    # concepts at day 7 and vanished for 200 days saw "measured over 10 retrievals · 100% ·
+    # unmeasured 0 · coverage complete" while the engine's own decay put them at 56%.
+    # Survivorship bias with a progress bar, inside the block written to prevent it.
+    def _unmeasured_is_past_due_now(h):
+        _add_ab()
+        for n in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=n, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-13"           # +7d: review BOTH, both recalled
+        for n in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=n, rating="good", grade="recalled",
+                                   kind="review", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2027-01-28"           # …then vanish for 200 days
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        u = r["unmeasured"]
+        return (u["past_due_now"] == 2          # v0.6.0 said 0 — they were "already reviewed"
+                and u["never_reviewed"] == 0    # …and correctly, none is virgin
+                and 0.0 < u["projected_recall_now"] < 1.0
+                and "past due and unretrieved" in r["read"])   # the debt reaches the narrator
+    check("unmeasured counts PAST-DUE-NOW, not merely never-reviewed (the 56% lie)",
+          fresh(_unmeasured_is_past_due_now))
+
+    # -- MEDIUM: an invented `kind` is invisible to every metric AND append-only forever --
+    check("receipt kind is validated (an invented kind dies before any write)",
+          fresh(lambda h: (_add_ab(), raises(cmd_receipt, _ns(json=json.dumps(
+              [{"topic": "t", "node": "a", "rating": "good", "kind": "revieww"}]))))[1]))
+    check("a valid kind still applies",
+          fresh(lambda h: (_add_ab(), _capture(cmd_receipt, _ns(json=json.dumps(
+              [{"topic": "t", "node": "a", "rating": "good", "kind": "pretest"}]))),
+              load_graph("t")["nodes"]["a"]["fsrs"]["reps"] == 1)[2]))
+
+    # -- LOW: a backward clock step must not stamp a negative elapsed-day count, forever --
+    def _dse_never_negative(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))          # day 0 = 2026-07-06
+        os.environ["ENGRAM_TODAY"] = "2026-07-01"                       # clock steps BACKWARD
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        rs = read_jsonl(os.path.join(h, "receipts", "t.jsonl"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return all(r.get("days_since_encode", 0) >= 0 for r in rs)
+    check("days_since_encode is never negative (a backward clock cannot poison a receipt)",
+          fresh(_dse_never_negative))
+
+    # -- LOW: `commit --clear` combined with --cue silently cleared (elif made set unreachable) --
+    check("commit --clear with --cue/--action is refused, not silently a clear",
+          fresh(lambda h: raises(cmd_commit, _ns(cue="when X", action="do Y", clear=True))))
     # -- a node's FIRST receipt is its ENCODING, never a retention test (v0.6.1) --
     # `rate`'s --kind argparse default is "review". A bare CLI `rate` therefore writes a
     # node's ONLY receipt as kind=review — and loop_closure reported 1.0 ("the loop is
@@ -3544,7 +3658,8 @@ def main():
     sp.add_argument("--confidence", type=int)
     sp.add_argument("--production"); sp.add_argument("--production-file")
     sp.add_argument("--grade", choices=GRADES); sp.add_argument("--probe")
-    sp.add_argument("--source", default="self"); sp.add_argument("--kind", default="review")
+    sp.add_argument("--source", default="self")
+    sp.add_argument("--kind", default="review", choices=KINDS)
 
     sp = sub.add_parser("receipt")
     sp.add_argument("--json"); sp.add_argument("--file")

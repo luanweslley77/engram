@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.6.2 — 2026-07-11 · the honest denominator was not honest
+
+Four defects in released v0.6.0/v0.6.1, found by an **independent reviewer working from the
+shipped code** — none of them in the nine the pre-release review caught. Two are the same
+failure mode this release was written to eliminate, hiding inside the machinery written to
+eliminate it.
+
+### 1. HIGH — the honest denominator exempted anyone who reviewed once, ever
+
+`retention.unmeasured` counted concepts that came due and were **never reviewed**. So a node
+was exempted the *moment* it was retrieved even once — forever after.
+
+Reproduced on shipped code: encode ten concepts, review all ten at day 7 (all recalled), then
+vanish for 200 days.
+
+```
+retention.read   : "measured over 10 retrievals"      buckets: 7d n=10, rate 1.0
+unmeasured       : 0
+coverage         : complete
+loop_closure     : "the loop is closing"
+
+the engine's OWN decay command, on the same state:
+  10 concepts due · mean current recall 56%
+```
+
+The dashboard reported **100% recall, nothing unmeasured, loop closing** while ten concepts sat
+at 56% and falling. That is *"survivorship bias with a progress bar"* — this block's own
+docstring — reproduced **inside the block written to prevent it**. The `coverage` guard could
+not see it either: coverage counts *reviews*, and every review here bucketed perfectly.
+
+**Fixed.** The denominator is now everything **past due right now** (`past_due_now`), with
+`never_reviewed` kept as a sub-count. A node past due *now* has, by definition, not been
+retrieved since it came due — whatever its history. And the debt now reaches the **narrator**,
+not just a nested key: every `read` string carries it, because a `read` of *"measured over 10
+retrievals"* while ten concepts rot is precisely the lie.
+
+### 2. HIGH — the normal settle path destroyed a second, ungraded production
+
+v0.6.0 fixed `drop_stash(topic, node)` on the rare **idempotent no-op** branch and left it live
+on the branch that runs on **every single settle**. `stash add` appends without deduping on
+node, so a node can legitimately hold two productions (a re-attempt, a park-and-resume, a slow
+assessor). Settling the first drained *both*:
+
+```
+stash before : [P1, P2 — second attempt, never graded]
+settle P1    -> stash after: []          P2 is gone. Never assessed, never a receipt.
+```
+
+The exact data loss that was fixed on the rare path, still live on the common one. **Fixed:**
+a settle drains only its own `sid`; the legacy sid-less `rate` path keeps its self-drain.
+
+### 3. MEDIUM — `kind` was unvalidated, and the two entry points disagreed on its default
+
+`rate --kind` defaulted to `"review"`; `cmd_receipt` defaulted to `"encode"`; neither validated
+it. Every v0.6 metric keys off the exact literal `"review"`, so a typo'd or invented kind is
+permanently invisible to `loop_closure`, every retention bucket, calibration and `stats.reviews`
+— and **unfixable**, because receipts are append-only. This was also the root cause of v0.6.1.
+**Fixed:** a `KINDS` constant, `choices=` on the flag, and validation in `validate_item`, so a
+bad batch dies before any write.
+
+### 4. LOW
+- A backward clock step could stamp a **negative** `days_since_encode` into an append-only
+  receipt, permanently. Clamped to ≥ 0.
+- `commit --clear --cue X --action Y` silently *cleared* (the `elif` made the set-branch
+  unreachable). Now refused.
+
+### Engine (selftest 120 → 126)
+
+Six new checks, every one **mutation-tested** — reverted to the broken behaviour to confirm it
+actually fails. Verified against the founder's real state: all numbers unchanged and now
+*mutually consistent* (`retention` and `decay` both report 70%), state byte-identical.
+
+No schema migration. `retention.unmeasured.past_due_never_reviewed` is replaced by
+`past_due_now` + `never_reviewed`; nothing outside this repo consumed it (v0.6 is hours old).
+
 ## 0.6.1 — 2026-07-11 · loop_closure could lie in the one direction that matters
 
 A defect in v0.6.0, found by an independent reviewer after release. It is small, it is
