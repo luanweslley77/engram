@@ -30,7 +30,7 @@ Three gaps, each confirmed by reading the code rather than the docs:
 - **`receipt --file` was not idempotent** (issue #3) — a crash-retry between `receipt` and
   `stash clear` double-counted reps permanently.
 
-### Engine (selftest 86 → 110)
+### Engine (selftest 86 → 111)
 
 - **`adherence`** — the funnel Engram never looked at: `loop_closure` (encoded → came due →
   actually reviewed), `return` (session cadence, days since last), `funnel` (topic → encoded →
@@ -76,6 +76,19 @@ Three gaps, each confirmed by reading the code rather than the docs:
   0.19s. The cache is keyed by path (never by topic alone, or a second `ENGRAM_HOME` would read
   the first one's receipts) and kept in sync on append, so a duplicate `sid` appearing later in
   the *same* batch is still caught. Both properties have selftests.
+- **Read paths now degrade instead of bricking — a whole class of crashes, several pre-existing.**
+  Fuzzing 3,000 randomized garbage states found **259 unhandled crashes in the first 300**. A
+  hand-edited state file can be perfectly valid JSON with the *wrong types*: `nodes` as a string,
+  `fsrs` as a list, an unhashable `topic`, a `rating` that is a dict — and every one of those
+  raised `TypeError`/`AttributeError` and took `stats` down with it, and therefore `/coach`.
+  Several predate this release (`compute_momentum` since v0.4, `due_items` and `compute_streak`
+  since v0.1, `_outcome` since v0.3, `compute_modality` since v0.5); v0.6 *widened* the blast
+  radius by making `stats` call `adherence` and `retention` too. The fix is one gate, not twenty
+  patches: **`iter_graphs` now validates the graph's shape** and skips what is structurally
+  unusable, because every read path funnels through it. `doctor` still reads graphs raw — it is
+  the thing that *reports* corruption, and it must never die of what it is there to find.
+  **Now 0 crashes / 3,000 states**, locked in by a selftest that feeds every read path a
+  deliberately type-corrupt state and demands they all return.
 
 ### Behavior
 

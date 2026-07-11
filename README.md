@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.6.0-6D4AA8.svg" alt="Version 0.6.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-110%2F110-3E7D5A.svg" alt="110/110 checks">
+  <img src="https://img.shields.io/badge/selftest-111%2F111-3E7D5A.svg" alt="111/111 checks">
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
   <a href="https://discord.gg/temm1e"><img src="https://img.shields.io/badge/discord-community-5865F2.svg" alt="Discord community"></a>
@@ -245,7 +245,7 @@ The model never does calendar math; this does:
 | `stats` / `report` | telemetry JSON (incl. `modality` — explorable vs dialogue retention) · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 110 checks over the FSRS math, state machine, adherence/retention arithmetic, and every hardened boundary |
+| `selftest` | 111 checks over the FSRS math, state machine, adherence/retention arithmetic, and every hardened boundary |
 
 </details>
 

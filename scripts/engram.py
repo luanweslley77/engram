@@ -91,6 +91,27 @@ def days_between(a_ts, b_ts):
         return None
     return (b - a).days
 
+def _fsrs_of(node):
+    """A node's FSRS block — ALWAYS a dict, whatever the graph actually contains.
+
+    `node.get("fsrs") or {}` is not enough. A hand-edited graph can carry `fsrs: "garbage"`
+    or `fsrs: ["x"]` — truthy non-dicts — and every downstream `.get()` then raises
+    AttributeError. Found by fuzzing 300 randomized garbage states: this crashed
+    `compute_momentum` (shipped since v0.4) and `due_items` (shipped since v0.1), and would
+    have crashed `adherence` and `retention` too. Because `stats` calls all of them, a single
+    bad hand-edit could brick `/coach` outright.
+
+    Read paths must DEGRADE, never brick — the same doctrine `iter_graphs` already states
+    for unreadable graph files. `doctor` is the thing that reports corruption; `stats` is not
+    allowed to die of it."""
+    f = node.get("fsrs") if isinstance(node, dict) else None
+    return f if isinstance(f, dict) else {}
+
+def _sort_key(r):
+    """Stable ordering for receipts whose `ts`/`id` may be any JSON type after a hand-edit.
+    Mixed types in a sort key (int ts beside str ts) raise TypeError in Python 3."""
+    return (str(r.get("ts") or ""), str(r.get("id") or ""))
+
 # ---------------------------------------------------------------- fsrs core
 
 def clamp(x, lo, hi):
@@ -380,16 +401,26 @@ def all_topics():
                   if f.endswith(".json") and slug_ok(f[:-5]))
 
 def iter_graphs(topic_filter=None):
-    """Yield (topic, graph) for readable graphs; skip corrupt ones without dying.
+    """Yield (topic, graph) for STRUCTURALLY USABLE graphs; skip the rest without dying.
 
-    Aggregate/read-only views (topics, stats, report, due, session-start) must
-    degrade gracefully when one graph file is unreadable — never brick on it."""
+    Aggregate/read-only views (topics, stats, adherence, retention, decay, report, due,
+    session-start) must degrade gracefully when one graph file is broken — never brick on it.
+
+    "Parses as JSON" is not enough. A hand-edited graph can be perfectly valid JSON whose
+    `nodes` is a string, or whose `order` is a number — and every downstream `.items()` /
+    `.get()` then raises, taking `stats` (and therefore /coach) down with it. Fuzzing 500
+    randomized garbage states showed the majority of crashes funnel through exactly here, so
+    the shape check belongs at this ONE gate rather than smeared across twenty call sites.
+    `doctor` deliberately reads graphs raw, so it can still REPORT the corruption this skips."""
     for t in all_topics():
         if topic_filter and t != topic_filter:
             continue
         g = read_json(p("graphs", t + ".json"))
-        if g is not None:
-            yield t, g
+        if not isinstance(g, dict) or not isinstance(g.get("nodes"), dict):
+            continue                                   # unusable shape: doctor reports it
+        if not isinstance(g.get("order"), list):
+            g = dict(g, order=sorted(g["nodes"]))      # salvageable: stable fallback order
+        yield t, g
 
 def die(msg, code=2):
     print("engram: error: " + msg, file=sys.stderr)
@@ -567,8 +598,10 @@ def cmd_add_topic(args):
 
 def state_counts(g):
     counts = {"review": 0, "learning": 0, "new": 0}
-    for node in g.get("nodes", {}).values():
-        st = node.get("state", "new")
+    for node in (g.get("nodes") or {}).values():
+        st = node.get("state", "new") if isinstance(node, dict) else "new"
+        if not isinstance(st, str):
+            st = "new"          # hand-edited garbage: count it, never crash on it
         counts[st] = counts.get(st, 0) + 1
     return counts
 
@@ -577,8 +610,10 @@ def cmd_topics(_args):
     for t, g in iter_graphs():
         states = state_counts(g)
         due_count = 0
-        for node in g["nodes"].values():
-            dd = safe_date(node.get("fsrs", {}).get("due"))
+        for node in (g.get("nodes") or {}).values():
+            if not isinstance(node, dict):
+                continue
+            dd = safe_date(_fsrs_of(node).get("due"))
             if node.get("state") != "new" and dd and dd <= today():
                 due_count += 1
         out.append({"topic": t, "title": g.get("title"), "goal": g.get("goal"),
@@ -639,11 +674,13 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
     cutoff = today() + timedelta(days=horizon_days)
     for t, g in iter_graphs(topic_filter):
         items = []
-        for nid in g["order"]:
-            node = g["nodes"].get(nid)
-            if node is None:
-                continue  # ghost id in order (hand-edited/adversarial graph)
-            fsrs = node.get("fsrs", {})
+        for nid in (g.get("order") or []):
+            if not isinstance(nid, str):
+                continue  # unhashable/typed junk in `order` would raise on dict.get()
+            node = (g.get("nodes") or {}).get(nid)
+            if not isinstance(node, dict):
+                continue  # ghost id in order, or a hand-edited non-object node
+            fsrs = _fsrs_of(node)
             due_d = safe_date(fsrs.get("due"))
             if node.get("state") == "new" or not due_d:
                 continue
@@ -1121,7 +1158,7 @@ def collect_receipts():
     return out
 
 def compute_streak(receipts):
-    dayset = {r.get("ts") for r in receipts if r.get("ts")}
+    dayset = {r.get("ts") for r in receipts if isinstance(r.get("ts"), str)}
     cursor = today()
     if cursor.isoformat() not in dayset:
         cursor -= timedelta(days=1)  # grace: today isn't over yet
@@ -1134,11 +1171,17 @@ def compute_streak(receipts):
 def _outcome(r):
     """The correctness signal for calibration: prefer the assessor grade (what the
     learner actually got right), falling back to the scheduler rating. A `partial`
-    (grade) / `hard` (rating) is real partial credit, not a total miss."""
+    (grade) / `hard` (rating) is real partial credit, not a total miss.
+
+    Both fields are coerced to str first: a hand-edited receipt can carry a dict or list
+    here, and `x in OUTCOME_OF_GRADE` on an unhashable raises TypeError, taking `stats`
+    (and therefore /coach) down with it. Read paths degrade; they do not brick."""
     g = r.get("grade")
-    if g in OUTCOME_OF_GRADE:
+    if isinstance(g, str) and g in OUTCOME_OF_GRADE:
         return OUTCOME_OF_GRADE[g]
     rating = r.get("rating")
+    if not isinstance(rating, str):
+        return None
     grade = GRADE_OF_RATING.get(rating)
     return OUTCOME_OF_GRADE.get(grade) if grade else None
 
@@ -1188,10 +1231,12 @@ def compute_momentum(receipts):
     most_durable = None
     retained_total = 0
     for _t, g in iter_graphs():
-        for nid, node in g.get("nodes", {}).items():
+        for nid, node in (g.get("nodes") or {}).items():
+            if not isinstance(node, dict):
+                continue
             if node.get("state") == "review":
                 retained_total += 1
-            s = as_number((node.get("fsrs") or {}).get("s"))
+            s = as_number(_fsrs_of(node).get("s"))
             if s is not None and (most_durable is None or s > most_durable["stability_days"]):
                 most_durable = {"node": nid, "stability_days": round(s, 1)}
     return {
@@ -1230,7 +1275,10 @@ def compute_modality(receipts):
         d = safe_date(r.get("ts"))
         if d is None:
             continue
-        key = (r.get("topic"), r.get("node"))
+        topic, node = r.get("topic"), r.get("node")
+        if not isinstance(topic, str) or not isinstance(node, str):
+            continue                       # hand-edited: an unhashable key would crash
+        key = (topic, node)
         if key not in first or d < first[key][0]:   # ties: keep the earlier-appended
             first[key] = (d, r)
     arms = {"explorable": [0, 0], "dialogue": [0, 0]}
@@ -1268,11 +1316,13 @@ def _by_node(receipts):
 
     The FIRST receipt for a node is its encoding event: its `ts` is day 0, and its
     `due_next` is the first review Engram ever booked for it."""
-    order = sorted(receipts, key=lambda r: (r.get("ts") or "", str(r.get("id") or "")))
+    order = sorted(receipts, key=_sort_key)
     out = {}
     for r in order:
         topic, node = r.get("topic"), r.get("node")
-        if not topic or not node:
+        # a hand-edited receipt can carry any JSON type here; a dict/list would be an
+        # unhashable key and take the whole command down with it
+        if not isinstance(topic, str) or not isinstance(node, str) or not topic or not node:
             continue
         slot = out.setdefault((topic, node), {"first": r, "reviews": []})
         if r.get("kind") == "review" and r.get("rating"):
@@ -1392,8 +1442,10 @@ def compute_retention():
                 if lo <= el <= hi:
                     b = buckets[name]
                     grade = r.get("grade")
-                    if grade not in GRADES:
-                        grade = GRADE_OF_RATING.get(r.get("rating"))
+                    if not isinstance(grade, str) or grade not in GRADES:
+                        rating = r.get("rating")
+                        grade = (GRADE_OF_RATING.get(rating)
+                                 if isinstance(rating, str) else None)
                     if grade in GRADES:
                         b[grade] += 1
                     b["n"] += 1
@@ -1412,7 +1464,7 @@ def compute_retention():
             slot = nodes.get((tp, nid))
             if slot is not None and slot["reviews"]:
                 continue                       # it was reviewed: it is measured, not stale
-            f = node.get("fsrs") or {}
+            f = _fsrs_of(node)
             s, due, last = (as_number(f.get("s")), safe_date(f.get("due")),
                             safe_date(f.get("last")))
             if s is None or due is None or due > t:
@@ -1452,6 +1504,14 @@ def compute_retention():
                       " — and %d concept%s past due, decaying unmeasured"
                       % (stale, "s" if stale != 1 else "") if stale else "")))),
     }
+
+def _as_list(x):
+    """A JSON file that should hold a list, but may hold anything after a hand-edit."""
+    return x if isinstance(x, list) else []
+
+def _open_misconceptions():
+    return [m for m in _as_list(read_json(p("misconceptions.json"), []))
+            if isinstance(m, dict) and m.get("status") == "open"]
 
 def compute_stats():
     receipts = collect_receipts()
@@ -1494,8 +1554,9 @@ def compute_stats():
         "due_now": len(due_items()),
         "pending_verify": len(read_jsonl(p(STASH_FILE))),
         "topics": topics,
-        "misconceptions_open": len([m for m in read_json(p("misconceptions.json"), []) if m.get("status") == "open"]),
-        "active_experiment": next((e["question"] for e in read_json(p("experiments.json"), []) if e.get("status") == "active"), None),
+        "misconceptions_open": len(_open_misconceptions()),
+        "active_experiment": next((e.get("question") for e in _as_list(read_json(p("experiments.json"), []))
+                                   if isinstance(e, dict) and e.get("status") == "active"), None),
         "last_coach_checkin": last_coach,
     }
 
@@ -1533,10 +1594,12 @@ def cmd_decay(args):
     rows, due_n = [], 0
     for tp, g in iter_graphs(args.topic):
         for nid in (g.get("order") or []):
+            if not isinstance(nid, str):
+                continue          # unhashable/typed junk in `order` raises on dict.get()
             node = (g.get("nodes") or {}).get(nid)
             if not isinstance(node, dict):
                 continue
-            f = node.get("fsrs") or {}
+            f = _fsrs_of(node)
             s, last = as_number(f.get("s")), safe_date(f.get("last"))
             if s is None or last is None:
                 continue                       # never encoded: nothing to lose yet
@@ -1629,7 +1692,7 @@ def cmd_topic_status(args):
         node = g["nodes"].get(nid)
         if node is None:
             continue
-        fsrs = node.get("fsrs", {})
+        fsrs = _fsrs_of(node)
         due = fsrs.get("due") or "—"
         s = as_number(fsrs.get("s"))
         flags = ("†" if node.get("threshold") else "") + ("*" if node.get("arbitrary") else "")
@@ -1785,15 +1848,26 @@ def cmd_doctor(_args):
         if g is None:
             issues.append("graph unreadable/corrupt: %s (fix or delete graphs/%s.json)" % (t, t))
             continue
-        node_count += len(g.get("nodes", {}))
-        for nid in g.get("order", []):
-            if nid not in g.get("nodes", {}):
+        if not isinstance(g, dict) or not isinstance(g.get("nodes"), dict):
+            issues.append("graph %s has an unusable shape (nodes must be an object) — "
+                          "reads skip it; fix or delete graphs/%s.json" % (t, t))
+            continue
+        node_count += len(g["nodes"])
+        for nid in (g.get("order") if isinstance(g.get("order"), list) else []):
+            if not isinstance(nid, str):
+                issues.append("%s: order contains a non-string entry (%s)"
+                              % (t, type(nid).__name__))
+            elif nid not in g["nodes"]:
                 issues.append("%s: order references missing node %s" % (t, nid))
-        for nid, node in g.get("nodes", {}).items():
+        for nid, node in g["nodes"].items():
+            if not isinstance(node, dict):
+                issues.append("%s/%s: node is not an object (%s)"
+                              % (t, nid, type(node).__name__))
+                continue
             st = node.get("state")
             if st not in NODE_STATES:
                 issues.append("%s/%s: invalid state %r" % (t, nid, st))
-            due = node.get("fsrs", {}).get("due")
+            due = _fsrs_of(node).get("due")
             if st != "new" and not due:
                 issues.append("%s/%s: state=%s but no due date" % (t, nid, st))
             elif due and safe_date(due) is None:
@@ -1906,7 +1980,8 @@ def cmd_report(args):
         total = max(1, len(g["nodes"]))
         seg = lambda n, color: ("<span style='width:%.1f%%;background:var(--%s)'></span>"
                                 % (100.0 * n / total, color)) if n else ""
-        parts.append("<div class='card'><h2 style='margin:0'>%s</h2>" % escape(g.get("title") or t))
+        parts.append("<div class='card'><h2 style='margin:0'>%s</h2>"
+                     % escape(str(g.get("title") or t)))
         if g.get("goal"):
             parts.append("<p class='goal'>goal: %s</p>" % escape(str(g["goal"])))
         parts.append("<div class='bar'>%s%s</div>" % (seg(counts["review"], "good"),
@@ -1915,13 +1990,13 @@ def cmd_report(args):
                      % (counts["review"], counts["learning"], counts["new"]))
         rows = []
         for nid in g["order"]:
-            node = g["nodes"].get(nid)
-            if node is None:
+            node = g["nodes"].get(nid) if isinstance(nid, str) else None
+            if not isinstance(node, dict):
                 continue
             st = node.get("state", "new")
             if st not in STATE_DOTS:
                 st = "new"
-            fsrs = node.get("fsrs", {})
+            fsrs = _fsrs_of(node)
             flags = ("<span class='flag'>†</span>" if node.get("threshold") else "") + \
                     ("<span class='flag'>*</span>" if node.get("arbitrary") else "")
             s = as_number(fsrs.get("s"))
@@ -1987,7 +2062,7 @@ def cmd_report(args):
                      "appears when both sides have history.</p>"
                      % (mod["min_n"], mod["explorable"]["n"], mod["dialogue"]["n"]))
 
-    mis = [m for m in read_json(p("misconceptions.json"), []) if m.get("status") == "open"]
+    mis = _open_misconceptions()
     if mis:
         parts.append("<h2>Open misconceptions</h2>")
         for m in mis:
@@ -2669,6 +2744,44 @@ def cmd_selftest(_args):
     check("stats embeds adherence + retention, ahead of the older blocks",
           fresh(_stats_embeds))
 
+    # -- READ PATHS DEGRADE, NEVER BRICK (hardened in v0.6 after a 3000-state fuzz) --
+    # A hand-edited state file can be perfectly valid JSON with the WRONG TYPES: `nodes` as a
+    # string, `fsrs` as a list, an unhashable `topic`, a `rating` that is a dict. Every one of
+    # those raised TypeError/AttributeError and took `stats` — and therefore /coach — down with
+    # it. Several were pre-existing (compute_momentum since v0.4, due_items since v0.1); v0.6
+    # widened the blast radius by making `stats` call adherence/retention too.
+    # `doctor` is the thing that REPORTS corruption; `stats` is not allowed to die of it.
+    def _reads_survive_garbage(h):
+        os.makedirs(p("graphs"), exist_ok=True); os.makedirs(p("receipts"), exist_ok=True)
+        write_json(p("graphs", "bad.json"), {
+            "topic": "bad", "title": {"not": "a string"}, "goal": ["nor", "this"],
+            "order": ["a", {"unhashable": 1}, 42, "ghost"],
+            "nodes": {"a": {"claim": "c", "probe": "p", "state": 5, "fsrs": "not-a-dict"},
+                      "b": ["not", "a", "node"], "c": None,
+                      "d": {"claim": "c", "probe": "p", "state": "review",
+                            "fsrs": {"s": "NaN", "due": 0, "last": [], "reps": {}}}}})
+        write_json(p("graphs", "worse.json"), {"topic": "worse", "nodes": "not-an-object"})
+        with open(p("receipts", "bad.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": 20260701, "topic": {"x": 1}, "node": ["y"],
+                                "kind": "review", "rating": {"bad": 1}, "grade": ["worse"],
+                                "s_before": "NaN", "sid": []}) + "\n")
+            f.write("THIS LINE IS NOT JSON\n")
+            f.write(json.dumps({"ts": "2026-07-01", "topic": "bad", "node": "a",
+                                "kind": "review", "rating": "good"}) + "\n")
+        write_json(p("misconceptions.json"), "not-a-list")
+        write_json(p("experiments.json"), {"not": "a list"})
+        _RECEIPTS_CACHE.clear()
+        # every read path must RETURN, not raise
+        for fn, ns in ((cmd_stats, _ns()), (cmd_adherence, _ns()), (cmd_retention, _ns()),
+                       (cmd_decay, _ns(topic=None, horizon=30)), (cmd_topics, _ns()),
+                       (cmd_due, _ns(topic=None, limit=None)), (cmd_session_start, _ns()),
+                       (cmd_report, _ns(out=None, allow_outside=False))):
+            _capture(fn, ns)                  # an exception here fails the check, as intended
+        # …and doctor must REPORT the corruption rather than silently swallow it
+        doc = _capture_json(cmd_doctor, _ns())
+        return doc["ok"] is False and len(doc["issues"]) >= 2
+    check("read paths degrade on type-corrupt state (stats/adherence/retention/decay/report/hook)",
+          fresh(_reads_survive_garbage))
     # -- applying a receipt self-drains the stash (F3 adjacent) --
     def _stash_self_clean(h):
         _add_ab()
