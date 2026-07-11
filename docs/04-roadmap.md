@@ -1,5 +1,19 @@
 # 04 · Roadmap, Metrics, Risks, Constitution
 
+> **Status: Phases 0–5 are complete** (shipped through v0.5.2). This document is now history —
+> a record of how Engram was built, and the source of the ten-article constitution, which
+> remains binding.
+>
+> **The road from here is [`10-roadmap-to-1.0.md`](10-roadmap-to-1.0.md)**, driven by
+> [`08-vision.md`](08-vision.md) (what to maximize, and which appealing metrics are traps) and
+> specified in [`09-target-architecture.md`](09-target-architecture.md).
+>
+> One correction this document earned the hard way: the north star below — *"7-day and 30-day
+> retention on scheduled reviews"* — was **named in Phase 0 and never implemented**. `stats` has
+> no time-based retention metric to this day. Naming a metric is not measuring it. `docs/08`
+> §2 and `docs/10` v0.6 exist to fix exactly that, and the constitution gains an eleventh
+> article (`docs/08` §7) that this document was missing.
+
 The plan is phased so that **every phase ends with a measurable learning outcome, not a feature list** — oracle-driven development applied to the product itself. Timeless by construction: the constitution and schemas survive model upgrades; content is generated fresh per learner, so nothing rots.
 
 ---

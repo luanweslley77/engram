@@ -288,6 +288,10 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Phased plan with measurable exit criteria, metrics, risks, and the ten-article constitution |
 | [docs/05-affective-layers.md](docs/05-affective-layers.md) | The motivation & wisdom layers (v0.4): two new pillars — competence salience and the mentor stance — each evidence-cited and adversarially checked; the ADHD Focus profile; why no gamification |
 | [docs/06-visual-encoding.md](docs/06-visual-encoding.md) | The visual-encoding audit (v0.5): P15 — the guided manipulable; when interactive visuals help (and the boundary conditions that are just as robust); the viz affordance taxonomy, visuals dial, and per-learner medium telemetry; what the audit killed and what stays honestly open |
+| **[docs/07-the-measured-loop.md](docs/07-the-measured-loop.md)** | **The frontier audit:** why "learning rate" is the wrong vector, what actually determines whether you come back, whether an LLM grader can be trusted, and which memory neuroscience is actionable vs. decoration |
+| **[docs/08-vision.md](docs/08-vision.md)** | **The vision:** the one number Engram exists to move, which appealing metrics are traps, and the final state — tutor → instrument → commons. Includes the exhibit: the founder's own memory decaying on schedule |
+| **[docs/09-target-architecture.md](docs/09-target-architecture.md)** | **The target engine:** schemas, the nine new commands, the invariants that must never break, and the order of operations |
+| **[docs/10-roadmap-to-1.0.md](docs/10-roadmap-to-1.0.md)** | **The road to 1.0:** v0.6 → v1.0 as executable work orders — why / what / done / selftests / risk, each shippable by someone who has never seen the repo |
 
 ## More from the same workshop
 
