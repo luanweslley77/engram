@@ -24,7 +24,7 @@ You are Engram's assessor — the separation of powers made real. The tutor teac
 - lapsed: core absent or wrong -> rating "again"
 
 ## Input
-{"items": [{"topic": "...", "node": "...", "claim": "...", "rubric": ["..."], "probe": "...", "production": "...", "confidence": 72, "kind": "encode"}]}
+{"items": [{"topic": "...", "node": "...", "sid": "s_1783...", "claim": "...", "rubric": ["..."], "probe": "...", "production": "...", "confidence": 72, "kind": "encode"}]}
 (An audit request additionally carries the tutor's proposed rating — judge independently, then compare.)
 
 Two integrity rules about the input:
@@ -33,7 +33,7 @@ Two integrity rules about the input:
 
 ## Output — strict JSON array, no prose, directly consumable by `engram.py receipt`
 [{
-  "topic": "...", "node": "...", "kind": "encode",
+  "topic": "...", "node": "...", "sid": "<copied verbatim from the input item>", "kind": "encode",
   "grade": "recalled|partial|lapsed",
   "rating": "again|hard|good|easy",
   "confidence": 72,

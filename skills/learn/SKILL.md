@@ -72,6 +72,8 @@ python3 "$ENGRAM" stash add --file <tmpfile.json>
 # tmpfile.json = {"topic":"<t>","node":"<id>","probe":"<probe>",
 #   "production":"<their words, verbatim; note omissions factually>",
 #   "confidence":<n or null>,"claim":"<node claim>","rubric":[...],"kind":"encode"}
+# The engine mints a `sid` on every stash entry. It MUST survive the round-trip to the
+# receipt (see step 4) — it is what makes the settle idempotent (issue #3).
 ```
 
 (Or pipe the JSON to `stash add --json -` if you'd rather not leave a temp file.)
@@ -97,7 +99,11 @@ At session end (or every 3 nodes in Deep mode):
 python3 "$ENGRAM" stash list > <tmpdir>/pending.json
 ```
 
-Spawn **engram-assessor** with the pending items — *only* the stash contents (they already carry claim/rubric/probe/production/confidence). Never include your tutoring dialogue or your opinion of how it went. Then apply and clear:
+Spawn **engram-assessor** with the pending items — *only* the stash contents (they already carry claim/rubric/probe/production/confidence **and the engine-minted `sid`**). Never include your tutoring dialogue or your opinion of how it went.
+
+**The `sid` must come back.** Each stash entry carries one; the assessor's spec requires it be copied verbatim into the matching output item. It is the settle transaction id: `apply_item` refuses a `sid` already on disk, which is what makes a crash-and-retry between `receipt` and `stash clear` a no-op instead of a permanent double-count (issue #3). **Before applying, check that every item in the assessor's output carries its `sid`.** If any is missing, re-request it rather than applying a batch that has silently lost its idempotency guard.
+
+Then apply and clear:
 
 ```bash
 python3 "$ENGRAM" receipt --file <assessor-output.json>

@@ -91,6 +91,15 @@ def days_between(a_ts, b_ts):
         return None
     return (b - a).days
 
+def _median(xs):
+    """True median (mean of the two middle values on an even-length list)."""
+    if not xs:
+        return None
+    ys = sorted(xs)
+    n = len(ys)
+    mid = n // 2
+    return ys[mid] if n % 2 else round((ys[mid - 1] + ys[mid]) / 2, 1)
+
 def _fsrs_of(node):
     """A node's FSRS block — ALWAYS a dict, whatever the graph actually contains.
 
@@ -109,8 +118,15 @@ def _fsrs_of(node):
 
 def _sort_key(r):
     """Stable ordering for receipts whose `ts`/`id` may be any JSON type after a hand-edit.
-    Mixed types in a sort key (int ts beside str ts) raise TypeError in Python 3."""
-    return (str(r.get("ts") or ""), str(r.get("id") or ""))
+
+    Mixed types in a sort key (an int ts beside a str ts) raise TypeError in Python 3, so
+    everything is coerced to str. A receipt with a MISSING or unparseable ts sorts LAST, not
+    first: every real receipt carries a date, and a broken one must never win the race to
+    become a node's day-0 anchor and poison every elapsed-day metric downstream.
+    (Found by adversarial review.)"""
+    ts = r.get("ts")
+    ok = isinstance(ts, str) and safe_date(ts) is not None
+    return (0 if ok else 1, str(ts or ""), str(r.get("id") or ""))
 
 # ---------------------------------------------------------------- fsrs core
 
@@ -816,6 +832,24 @@ def drop_stash(topic, node):
         for e in keep:
             append_jsonl(path, e)
 
+def drop_stash_sid(topic, sid):
+    """Remove exactly the stash entry with this sid — the surgical sibling of drop_stash.
+
+    drop_stash() drains every entry for a (topic, node), which is right when a receipt has
+    just been APPLIED to that node. It is wrong on the idempotent no-op path: a second,
+    never-graded production for the same node would be destroyed along with the already-
+    settled one."""
+    path = p(STASH_FILE)
+    entries = read_jsonl(path)
+    keep = [e for e in entries if not (e.get("topic") == topic and e.get("sid") == sid)]
+    if len(keep) != len(entries):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        for e in keep:
+            append_jsonl(path, e)
+
 def apply_item(item, kind):
     validate_item(item)
     g = load_graph(item["topic"])
@@ -828,7 +862,13 @@ def apply_item(item, kind):
     # stats/calibration/refit permanently. The stash id is the transaction id.
     sid = item.get("sid")
     if isinstance(sid, str) and sid and sid in _seen_sids(item["topic"]):
-        drop_stash(item["topic"], item["node"])   # already graded; drain the stash entry
+        # Drop ONLY the stash entry carrying THIS sid — never every entry for (topic, node).
+        # A node can legitimately hold two stashed productions (a re-attempt after a park, a
+        # second pass in one session). Draining by (topic, node) on the no-op path would
+        # silently destroy a NEWER, differently-sid'd, never-graded production: the
+        # idempotency guard would itself have become a data-loss bug. Found by adversarial
+        # review; my own dogfood missed it.
+        drop_stash_sid(item["topic"], sid)
         return {"node": item["node"], "topic": item["topic"], "applied": False,
                 "idempotent": True, "sid": sid,
                 "note": "receipt already applied — no-op (idempotency guard, issue #3)"}
@@ -1355,9 +1395,14 @@ def compute_adherence():
     gaps = sorted((b - a).days for a, b in zip(sdates, sdates[1:]))
     last = sdates[-1] if sdates else None
 
+    # "Retained at 30 days" must mean ONE thing across the whole payload. This used to say
+    # `>= 25 days` while retention's 30d bucket says [15, 59] — two contradictory definitions
+    # of the same phrase, shipping side by side in `stats`. Both now read from the single
+    # source of truth. (Found by adversarial review.)
+    lo30, hi30 = next((lo, hi) for name, lo, hi in RETENTION_BUCKETS if name == "30d")
     retained_30d = sum(
         1 for slot in nodes.values()
-        if any((days_between(slot["first"].get("ts"), r.get("ts")) or 0) >= 25
+        if any(lo30 <= (days_between(slot["first"].get("ts"), r.get("ts")) or -1) <= hi30
                and r.get("rating") != "again" for r in slot["reviews"]))
 
     if not nodes:
@@ -1379,7 +1424,7 @@ def compute_adherence():
             "sessions_7d": sum(1 for d in sdates if 0 <= (t - d).days < 7),
             "sessions_30d": sum(1 for d in sdates if 0 <= (t - d).days < 30),
             "days_since_last_session": ((t - last).days if last else None),
-            "median_gap_days": (gaps[len(gaps) // 2] if gaps else None),
+            "median_gap_days": _median(gaps),
             "reviews_due_now": len(due_items()),
         },
         "funnel": {
@@ -1476,6 +1521,25 @@ def compute_retention():
     bucketed = sum(b["n"] for b in buckets.values())
     total_reviews = sum(len(s["reviews"]) for s in nodes.values())
     headline = buckets["30d"]
+
+    if headline["n"]:
+        read = "30-day recall %d%% (n=%d)" % (round(headline["rate"] * 100), headline["n"])
+    elif bucketed:
+        read = ("measured over %d retrieval%s — none yet at the 30-day mark"
+                % (bucketed, "s" if bucketed != 1 else ""))
+    else:
+        read = "insufficient-data (no reviews yet)" + (
+            " — and %d concept%s past due, decaying unmeasured"
+            % (stale, "s" if stale != 1 else "") if stale else "")
+    # The coverage guard is worthless if nothing reads it. If the windows ever stop
+    # partitioning [0, inf), the metric is silently discarding evidence — and it must SAY so
+    # in the one field a narrator is guaranteed to read, not merely record it in a nested key
+    # nobody consumes. (Found by adversarial review: the guard was inert.)
+    if bucketed != total_reviews:
+        read = ("UNTRUSTWORTHY — %d of %d reviews fell outside every bucket and were dropped; "
+                "the windows no longer partition [0,inf). Fix RETENTION_BUCKETS before "
+                "believing any number here. (%s)"
+                % (total_reviews - bucketed, total_reviews, read))
     return {
         "buckets": buckets,
         "definition": ("of retrievals attempted N days after a concept was FIRST encoded, the "
@@ -1496,13 +1560,7 @@ def compute_retention():
                      "retention without them is survivorship bias — they are exactly the "
                      "concepts that decayed."),
         },
-        "read": (("30-day recall %d%% (n=%d)" % (round(headline["rate"] * 100), headline["n"]))
-                 if headline["n"] else
-                 (("measured over %d retrieval%s — none yet at the 30-day mark"
-                   % (bucketed, "s" if bucketed != 1 else "")) if bucketed else
-                  ("insufficient-data (no reviews yet)" + (
-                      " — and %d concept%s past due, decaying unmeasured"
-                      % (stale, "s" if stale != 1 else "") if stale else "")))),
+        "read": read,
     }
 
 def _as_list(x):
@@ -1591,6 +1649,14 @@ def cmd_decay(args):
     retention = as_number(model["memory"].get("desired_retention"), RETENTION_DEFAULT)
     im = as_number(model["memory"].get("interval_multiplier"), 1.0)
 
+    if args.topic:
+        # An unknown topic must ERROR, not return "nothing to lose". A confident false
+        # all-clear from a command whose entire job is honest accounting is the worst
+        # possible failure mode. (Found by adversarial review.)
+        require_slug(args.topic)
+        if args.topic not in all_topics():
+            die("unknown topic: %s (run `topics` to list)" % args.topic)
+
     rows, due_n = [], 0
     for tp, g in iter_graphs(args.topic):
         for nid in (g.get("order") or []):
@@ -1618,6 +1684,16 @@ def cmd_decay(args):
                 "r_if_reviewed": round(retrievability(horizon, as_number(after["s"], s)), 3),
                 "s_if_reviewed": round(as_number(after["s"], s), 1),
             })
+
+    # The benefit arm must be priced over exactly the nodes the learner would actually
+    # review — the DUE ones. Simulating a `good` rating on every encoded node while
+    # charging only for the due queue overstates what N minutes buys, which is precisely
+    # the dishonesty this command exists to avoid. A not-yet-due node keeps its own curve
+    # in both arms. (Found by adversarial review.)
+    for r in rows:
+        if not r["due"]:
+            r["r_if_reviewed"] = r["r_no_review"]
+            r["s_if_reviewed"] = r["s"]
 
     n = len(rows)
     mean = lambda k: (round(sum(r[k] for r in rows) / n, 3) if n else None)
@@ -2008,6 +2084,52 @@ def cmd_report(args):
                 escape(str(lapses)) if lapses else ""))
         parts.append("<table><tr><th></th><th>concept</th><th>stability</th><th>due</th>"
                      "<th>lapses</th></tr>%s</table></div>" % "".join(rows))
+
+    # v0.6: the binding constraint and the north star lead the dashboard, because a
+    # dashboard that opens with calibration over a loop that never closed is decor.
+    ad, ret = stats["adherence"], stats["retention"]
+    lc = ad["loop_closure"]
+    parts.append("<h2>The loop</h2>")
+    if lc["rate"] is None:
+        parts.append("<p class='note'>%s</p>" % escape(lc["read"]))
+    else:
+        pct = int(round(lc["rate"] * 100))
+        tone = "bad" if lc["rate"] == 0 else ("warn" if lc["rate"] < 0.5 else "good")
+        parts.append("<div class='hbar'><span class='lab mono'>closed</span>"
+                     "<span class='track'><span class='fill' style='width:%d%%;"
+                     "background:var(--%s)'></span></span>"
+                     "<span class='val'>%d of %d · %d%%</span></div>"
+                     % (pct, tone, lc["first_review_done"], lc["encoded_past_due"], pct))
+        parts.append("<p class='note'><b>%s</b> — of the concepts Engram taught and scheduled, "
+                     "this is how many you came back for. Every other number on this page is "
+                     "multiplied by it.</p>" % escape(lc["read"]))
+
+    parts.append("<h2>Retention — recall by days since you first learned it</h2>")
+    if any(b["n"] for b in ret["buckets"].values()):
+        for key, label in (("early", "0–3d (still encoding)"), ("7d", "4–14d"),
+                           ("30d", "15–59d"), ("90d", "60–179d"), ("180d+", "180d+")):
+            b = ret["buckets"][key]
+            if not b["n"]:
+                continue
+            parts.append("<div class='hbar'><span class='lab mono'>%s</span>"
+                         "<span class='track'><span class='fill' style='width:%d%%'></span></span>"
+                         "<span class='val'>%d%% · n=%d</span></div>"
+                         % (escape(label), int(b["rate"] * 100), int(b["rate"] * 100), b["n"]))
+    else:
+        parts.append("<p class='note'>%s</p>" % escape(ret["read"]))
+    u = ret["unmeasured"]
+    if u["past_due_never_reviewed"]:
+        parts.append("<p class='note' style='color:var(--bad)'><b>%d concept%s came due and "
+                     "were never reviewed.</b> They are <b>not</b> in the numbers above — their "
+                     "recall is <i>unknown, not absent</i>, and FSRS puts them near <b>%d%%</b> "
+                     "right now. A retention figure that quietly drops them is survivorship "
+                     "bias with a progress bar.</p>"
+                     % (u["past_due_never_reviewed"],
+                        "s" if u["past_due_never_reviewed"] != 1 else "",
+                        int(round((u["projected_recall_now"] or 0) * 100))))
+    if not ret["coverage"]["complete"]:
+        parts.append("<p class='note' style='color:var(--bad)'><b>%s</b></p>"
+                     % escape(ret["read"]))
 
     parts.append("<h2>Retention by memory strength</h2>")
     if stats["recall_by_stability"]:
@@ -2744,6 +2866,152 @@ def cmd_selftest(_args):
     check("stats embeds adherence + retention, ahead of the older blocks",
           fresh(_stats_embeds))
 
+    # ===== defects found by the v0.6 adversarial review (each check fails without its fix) =====
+
+    # -- the dashboard must SHOW the two new numbers, not just compute them --
+    # `stats` gained adherence+retention and the HTML report never consumed them, so /coach
+    # dashboard still headlined a strength-bucketed retention with no `unmeasured` denominator.
+    # A guard nobody reads is not a guard. (Found by adversarial review.)
+    def _dashboard_shows_the_loop(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"          # came due, never reviewed
+        out = os.path.join(h, "d.html")
+        _capture(cmd_report, _ns(out=out, allow_outside=False))
+        html_text = open(out, encoding="utf-8").read()
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        low = html_text.lower()
+        return ("the loop" in low
+                and "never closed" in low                  # the binding constraint, stated
+                and "came due and" in low                  # the unmeasured denominator, stated
+                and "survivorship bias" in low)
+    check("dashboard leads with loop_closure and voices the unmeasured denominator",
+          fresh(_dashboard_shows_the_loop))
+    # -- the "idempotent no-op" must NOT destroy a second, ungraded production for the node --
+    # drop_stash(topic, node) drains EVERY entry for that node. On the no-op path that is data
+    # loss: a re-attempt stashed after the first settle would vanish, never graded. The guard
+    # written to prevent corruption would itself have corrupted.
+    def _noop_preserves_other_stash(h):
+        _add_ab()
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "first try"})))
+        sid1 = _capture_json(cmd_stash, _ns(action="list"))[0]["sid"]
+        graded = [{"topic": "t", "node": "a", "rating": "good", "grade": "recalled",
+                   "kind": "encode", "sid": sid1, "production": "first try"}]
+        write_json(os.path.join(h, "g.json"), graded)
+        _capture(cmd_receipt, _ns(file=os.path.join(h, "g.json")))          # applied
+        # learner re-attempts the SAME node; a new production is stashed, ungraded
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(
+            {"topic": "t", "node": "a", "probe": "pa", "production": "second try"})))
+        _capture(cmd_receipt, _ns(file=os.path.join(h, "g.json")))          # crash-retry: no-op
+        left = _capture_json(cmd_stash, _ns(action="list"))
+        return (len(left) == 1 and left[0]["production"] == "second try"
+                and left[0]["sid"] != sid1)
+    check("idempotent no-op drops only its OWN sid (a newer ungraded production survives)",
+          fresh(_noop_preserves_other_stash))
+
+    # -- decay must REFUSE an unknown topic, never return a confident all-clear --
+    check("decay --topic <unknown> errors instead of reporting 'nothing to lose'",
+          fresh(lambda h: raises(cmd_decay, _ns(topic="nosuchtopic", horizon=30))))
+
+    # -- decay prices the benefit over the DUE nodes only (not every encoded node) --
+    def _decay_prices_only_due(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))     # due in ~4d
+        _capture(cmd_rate, _ns(topic="t", node="b", rating="easy", grade="recalled",
+                               kind="encode", production="x"))     # easy -> due far out
+        os.environ["ENGRAM_TODAY"] = "2026-07-12"                  # only `a` is due
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        rows = {r["node"]: r for r in d["nodes"]}
+        # the not-yet-due node must keep the SAME curve in both arms — reviewing it isn't
+        # what the quoted minutes buy
+        return (d["due_now"] == 1
+                and rows["b"]["r_if_reviewed"] == rows["b"]["r_no_review"]
+                and rows["a"]["r_if_reviewed"] > rows["a"]["r_no_review"])
+    check("decay's benefit arm is priced over the DUE queue only (no overstated headline)",
+          fresh(_decay_prices_only_due))
+
+    # -- the coverage guard must be VOICED, not merely recorded --
+    def _coverage_is_voiced(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-27"
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        saved = list(RETENTION_BUCKETS)
+        try:                                    # simulate a future regression to disjoint windows
+            globals_ = sys.modules[cmd_retention.__module__].__dict__
+            globals_["RETENTION_BUCKETS"] = (("30d", 25, 40),)   # day-21 review now falls in a gap
+            r = _capture_json(cmd_retention, _ns())
+        finally:
+            globals_["RETENTION_BUCKETS"] = tuple(saved)
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (r["coverage"]["complete"] is False
+                and "UNTRUSTWORTHY" in r["read"])   # ← the guard must reach the narrator
+    check("retention coverage failure is VOICED in `read`, not silently recorded",
+          fresh(_coverage_is_voiced))
+
+    # -- ONE definition of "retained at 30 days" across the whole payload --
+    # This used to say `>= 25 days` in the funnel while retention's 30d bucket said [15,59]:
+    # two contradictory meanings of the same phrase shipping side by side in `stats`. The check
+    # exercises the BEHAVIOUR (a day-20 review counts, a day-200 one does not), not the constant.
+    def _retained_30d_matches_bucket(h):
+        # The fixture is built so the OLD (`>= 25`, unbounded) and NEW ([15, 59]) definitions
+        # genuinely DIVERGE — two reviews at day 20 (inside the window, but below 25) and one
+        # at day 200 (above 25, but outside the window). Old -> 1. New -> 2. A fixture where
+        # they coincide would let the regression back in, which is the whole failure mode here.
+        g = {"topic": "t", "title": "T", "order": ["a", "b", "c"], "nodes": {
+            "a": {"claim": "A", "probe": "pa"}, "b": {"claim": "B", "probe": "pb"},
+            "c": {"claim": "C", "probe": "pc"}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g), replace=False))
+        for node in ("a", "b", "c"):
+            _capture(cmd_rate, _ns(topic="t", node=node, rating="good", grade="recalled",
+                                   kind="encode", production="x"))          # day 0
+        os.environ["ENGRAM_TODAY"] = "2026-07-26"                           # +20d: in [15,59], < 25
+        for node in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=node, rating="good", grade="recalled",
+                                   kind="review", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2027-01-22"                           # +200d: > 25, > 59
+        _capture(cmd_rate, _ns(topic="t", node="c", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        ad = _capture_json(cmd_adherence, _ns())
+        ret = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        # the funnel's retained@30d must equal retention's own 30d bucket — one definition
+        return (ad["funnel"]["nodes_retained_30d"] == 2      # old definition would say 1
+                and ret["buckets"]["30d"]["n"] == 2
+                and ret["buckets"]["180d+"]["n"] == 1)
+    check("funnel.nodes_retained_30d uses retention's 30d window (one definition, not two)",
+          fresh(_retained_30d_matches_bucket))
+
+    # -- median is a median --
+    check("median_gap_days is a true median (even-length lists average the middle two)",
+          _median([1, 2, 3, 4]) == 2.5 and _median([1, 2, 3]) == 2 and _median([]) is None)
+
+    # -- a receipt with a broken ts must not become the node's day-0 anchor --
+    def _broken_ts_never_anchors(h):
+        _add_ab()
+        os.makedirs(p("receipts"), exist_ok=True)
+        with open(p("receipts", "t.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "r0", "ts": None, "topic": "t", "node": "a",
+                                "kind": "encode", "rating": "good"}) + "\n")
+            f.write(json.dumps({"id": "r1", "ts": "2026-07-06", "topic": "t", "node": "a",
+                                "kind": "encode", "rating": "good",
+                                "due_next": "2026-07-10"}) + "\n")
+            f.write(json.dumps({"id": "r2", "ts": "2026-07-27", "topic": "t", "node": "a",
+                                "kind": "review", "rating": "good", "grade": "recalled"}) + "\n")
+        _RECEIPTS_CACHE.clear()
+        by = _by_node(collect_receipts())
+        first = by[("t", "a")]["first"]
+        r = _capture_json(cmd_retention, _ns())
+        # day 0 must be the REAL receipt, so the day-21 review lands in the 30d bucket
+        return first["id"] == "r1" and r["buckets"]["30d"]["n"] == 1
+    check("a receipt with a missing ts sorts last and never becomes the day-0 anchor",
+          fresh(_broken_ts_never_anchors))
     # -- READ PATHS DEGRADE, NEVER BRICK (hardened in v0.6 after a 3000-state fuzz) --
     # A hand-edited state file can be perfectly valid JSON with the WRONG TYPES: `nodes` as a
     # string, `fsrs` as a list, an unhashable `topic`, a `rating` that is a dict. Every one of

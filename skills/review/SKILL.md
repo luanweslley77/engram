@@ -67,7 +67,7 @@ Relay the returned due date in passing, not ceremonially ("back in 12 days"). **
 
 ## 3 · Assessor audit (keep self-grading honest)
 
-If the session had ≥8 items, any disputed grade, or ≥3 `partial`s: stash `{topic, node, probe, claim, rubric, production, confidence, kind:"audit", tutor_rating:"<r>"}` for each such item, then spawn **engram-assessor** on `stash list` for an audit verdict, and `stash clear` after. Report disagreements to the learner and log a `misconception add` or a note — do **not** re-rate already-committed items (scheduling stands; drift is the coach's monthly business). Disputes from the learner: same path, once.
+If the session had ≥8 items, any disputed grade, or ≥3 `partial`s: stash `{topic, node, probe, claim, rubric, production, confidence, kind:"audit", tutor_rating:"<r>"}` (the engine mints the `sid`; the assessor must return it) for each such item, then spawn **engram-assessor** on `stash list` for an audit verdict, and `stash clear` after. Report disagreements to the learner and log a `misconception add` or a note — do **not** re-rate already-committed items (scheduling stands; drift is the coach's monthly business). Disputes from the learner: same path, once.
 
 ## 4 · Close
 

@@ -30,7 +30,7 @@ Three gaps, each confirmed by reading the code rather than the docs:
 - **`receipt --file` was not idempotent** (issue #3) — a crash-retry between `receipt` and
   `stash clear` double-counted reps permanently.
 
-### Engine (selftest 86 → 111)
+### Engine (selftest 86 → 119)
 
 - **`adherence`** — the funnel Engram never looked at: `loop_closure` (encoded → came due →
   actually reviewed), `return` (session cadence, days since last), `funnel` (topic → encoded →
@@ -89,6 +89,48 @@ Three gaps, each confirmed by reading the code rather than the docs:
   the thing that *reports* corruption, and it must never die of what it is there to find.
   **Now 0 crashes / 3,000 states**, locked in by a selftest that feeds every read path a
   deliberately type-corrupt state and demands they all return.
+
+### What the adversarial review caught that the tests, the live test, and the dogfood all missed
+
+Protocol step 4.5 earned its place again. **Nine defects behind a green selftest, an exhaustive
+live test, and a passing agent dogfood** — and the worst of them was one the dogfood had actively
+*certified*:
+
+- **Issue #3 was not actually fixed.** The `sid` never survived the assessor, because
+  `agents/engram-assessor.md` declares a *strict* output schema that never mentioned it. The
+  guard was dead code in the shipped pipeline. **The dogfood "passed" only because the prompt
+  written for it told the assessor to pass the field through — an instruction the real `/learn`
+  skill never gives.** A test that hands the subject the answer is not a test. The `sid` is now
+  part of the assessor's contract (Claude *and* Codex ports), `/learn` step 4 checks it came back
+  before applying, and the round-trip has been re-verified with the real agent and **no hint**.
+- **The idempotent "no-op" was a data-loss bug.** It called `drop_stash(topic, node)`, which
+  drains *every* stash entry for that node — so a crash-retry would silently destroy a second,
+  newer, never-graded production. The guard written to prevent corruption would have corrupted.
+  Now drops only its own `sid`.
+- **`decay --topic <unknown>` returned a confident false all-clear** ("nothing to lose") instead
+  of erroring. From a command whose entire job is honest accounting, that is the worst available
+  failure mode. It now refuses.
+- **`decay` overstated its own headline.** The benefit arm simulated reviewing *every encoded
+  node* while pricing `minutes` from the *due queue only*. The not-yet-due nodes now keep their
+  own curve in both arms — you are quoted exactly what those minutes buy.
+- **The `coverage` guard was inert.** It was computed, stored in a nested key, and read by
+  nobody — so the anti-data-loss check could not actually prevent the regression it existed for.
+  An incomplete partition now hijacks `read` with **UNTRUSTWORTHY** in the one field a narrator
+  is guaranteed to see.
+- **Two contradictory definitions of "retained at 30 days" shipped in the same payload** —
+  `funnel.nodes_retained_30d` used `>= 25` days while `retention`'s 30d bucket is `[15, 59]`.
+  One definition now, from one source.
+- **A receipt with a missing `ts` sorted first** and became a node's day-0 anchor, poisoning
+  every elapsed-day metric downstream. Broken timestamps now sort last.
+- **`median_gap_days` was not a median** (it took the upper element on even-length lists).
+- **The dashboard never showed any of it.** `/coach`'s HTML still headlined a strength-bucketed
+  retention with no `unmeasured` denominator. It now opens with `loop_closure` and states the
+  concepts that came due and were never reviewed.
+
+Each has a selftest, and each selftest was **mutation-tested** — reverted to the broken behavior
+to confirm it actually fails. Two first drafts turned out to be theatre (one asserted a constant
+instead of a behavior; one had a fixture where the old and new definitions coincided by
+coincidence) and were rebuilt until the regression is genuinely caught.
 
 ### Behavior
 
