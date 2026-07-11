@@ -242,9 +242,12 @@ ship first.
     "complete": true                // A metric that quietly discards data is worse than none.
   },
   "unmeasured": {                   // THE HONEST DENOMINATOR — the anti-survivorship guard
-    "past_due_never_reviewed": 7,
-    "note": "these are not absent from the numerator — they are UNKNOWN, and their expected "
-            "recall is computable from FSRS. Reporting retention without them is survivorship bias."
+    "past_due_now": 7,          // THE honest denominator: not retrieved since it came due
+    "never_reviewed": 7,        // of those, never retrieved even once
+    "note": "UNKNOWN, not absent. Reporting retention without them is survivorship bias. NOTE: "
+            "v0.6.0 scoped this to never-reviewed nodes, which exempted a node the moment it was "
+            "retrieved once — a learner who reviewed 10 concepts then vanished for 200 days saw "
+            "'100% recall, 0 unmeasured'. Past-due-NOW is the only honest scope."
   },
   "projected_if_never_reviewed": 0.41,   // real FSRS R(t) over the unreviewed set
   "read": "insufficient-data (n=0 reviews) — but 7 concepts are decaying unmeasured"
