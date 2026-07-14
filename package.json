@@ -6,6 +6,7 @@
   "license": "MIT",
   "main": "./index.js",
   "exports": {
+    "./tui": "./plugin-tui.js",
     "./server": "./index.js"
   },
   "engines": {
@@ -13,6 +14,7 @@
   },
   "files": [
     "index.js",
+    "plugin-tui.js",
     ".opencode",
     "skills",
     "agents",
@@ -22,5 +24,8 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/luanweslley77/engram.git"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.17.20"
   }
 }
