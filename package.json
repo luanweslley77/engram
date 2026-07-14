@@ -1,0 +1,18 @@
+{
+  "name": "engram",
+  "version": "1.0.2",
+  "description": "Evidence-based learning engine for OpenCode — learn anything, verify by free recall, schedule with FSRS, adapt from your own data.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    ".opencode",
+    "skills",
+    "agents",
+    "scripts",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luanweslley77/engram.git"
+  }
+}

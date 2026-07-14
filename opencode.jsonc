@@ -1,0 +1,35 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "assessor": {
+      "mode": "subagent",
+      "hidden": true
+    },
+    "curriculum-architect": {
+      "mode": "subagent",
+      "hidden": true,
+      "tools": {
+        "webfetch": "allow",
+        "websearch": "allow",
+        "read": "allow"
+      }
+    },
+    "artifact-smith": {
+      "mode": "subagent",
+      "hidden": true,
+      "tools": {
+        "read": "allow",
+        "write": "allow",
+        "bash": "allow"
+      }
+    }
+  },
+  "permission": {
+    "external_directory": {
+      "scripts/": "allow",
+      "docs/": "allow",
+      "skills/": "allow",
+      ".opencode/": "allow"
+    }
+  }
+}

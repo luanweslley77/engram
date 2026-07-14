@@ -1,0 +1,29 @@
+{
+  "name": "engram",
+  "version": "1.0.2",
+  "description": "Evidence-based learning engine for OpenCode — learn anything, verify by free recall, schedule with FSRS, adapt from your own data.",
+  "type": "module",
+  "license": "MIT",
+  "skills": {
+    "learn": ".opencode/skills/learn/SKILL.md",
+    "review": ".opencode/skills/review/SKILL.md",
+    "coach": ".opencode/skills/coach/SKILL.md"
+  },
+  "agents": {
+    "assessor": ".opencode/agents/assessor.md",
+    "curriculum-architect": ".opencode/agents/curriculum-architect.md",
+    "artifact-smith": ".opencode/agents/artifact-smith.md"
+  },
+  "files": [
+    ".opencode/skills",
+    ".opencode/agents",
+    "skills",
+    "agents",
+    "scripts",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luanweslley77/engram.git"
+  }
+}
