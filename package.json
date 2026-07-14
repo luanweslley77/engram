@@ -4,7 +4,15 @@
   "description": "Evidence-based learning engine for OpenCode — learn anything, verify by free recall, schedule with FSRS, adapt from your own data.",
   "type": "module",
   "license": "MIT",
+  "main": "./index.js",
+  "exports": {
+    "./server": "./index.js"
+  },
+  "engines": {
+    "opencode": ">=1.0.0"
+  },
   "files": [
+    "index.js",
     ".opencode",
     "skills",
     "agents",
