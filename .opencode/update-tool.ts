@@ -66,12 +66,20 @@
 
 import { tool } from "@opencode-ai/plugin"
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { resolve, sep } from "node:path"
 import { readManifest, saveManifest } from "./update.js"
 
-/** Guards against path traversal — rejects paths that resolve outside the target directory. */
+/**
+ * Guards against path traversal — rejects paths that resolve outside the
+ * target directory. Uses os-specific separator (path.sep) instead of
+ * hardcoded "/" so that resolve works correctly on Windows (\\ separators).
+ *
+ * Manifest category paths (POSIX-style with /) don't need this treatment —
+ * they are JSON keys from .engram-update.jsonc, not filesystem paths.
+ * Only paths resolved via resolve() are subject to the guard.
+ */
 function isWithinTarget(target: string, filePath: string): boolean {
-  const targetDir = resolve(target) + "/"
+  const targetDir = resolve(target) + sep
   const resolved = resolve(target, filePath)
   return resolved.startsWith(targetDir)
 }

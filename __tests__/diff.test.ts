@@ -50,4 +50,15 @@ describe("diffLines", () => {
     expect(result).toContain(" line4")
     expect(result).toContain(" line6")
   })
+
+  it("trailing context is correct on insertions (different diff lengths)", () => {
+    const result = diffLines("p\n2\ns1\ns2\ns3", "p\nX\nY\ns1\ns2\ns3")
+    expect(result).not.toBeNull()
+    expect(result).toContain("-2")
+    expect(result).toContain("+X")
+    expect(result).toContain("+Y")
+    expect(result).toContain(" s1")
+    expect(result).toContain(" s2")
+    expect(result).toContain(" s3")
+  })
 })

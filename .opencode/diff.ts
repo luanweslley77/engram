@@ -30,6 +30,18 @@ function splitLines(text: string): string[] {
 
 /**
  * Produces a unified diff string between two texts, or null if identical.
+ * Normalizes CRLF → LF and strips trailing newlines before comparison,
+ * so files differing only in line endings produce no diff entry.
+ *
+ * Edge case: contentsMatch (used by diffCategory) compares byte-level
+ * buffers via Buffer.equals, so CRLF-only differences ARE flagged as
+ * "modified" and land in skipped[]. diffLines normalizes those differences
+ * away and returns null. The result is a manifest exists but
+ * .engram-update.diff may not contain an entry for that file.
+ * If ALL skipped files differ only in line endings, no .diff is written
+ * at all. The template guard in STEP 4e handles this gracefully:
+ * "If Read tool fails, say no diff is available and return to STEP 4."
+ *
  * Format: @@ hunk header, context lines ( ), deletions (-), additions (+).
  */
 export function diffLines(a: string, b: string): string | null {
@@ -73,10 +85,9 @@ export function diffLines(a: string, b: string): string | null {
   for (let i = prefix; i <= suffixB; i++)
     out.push(`+${linesB[i]}`)
 
-  const ctxEnd = Math.max(suffixA, suffixB) + ctxAfter
-  for (let i = Math.max(suffixA, suffixB) + 1; i <= ctxEnd; i++) {
-    const line = i < linesA.length ? linesA[i] : i < linesB.length ? linesB[i] : ""
-    out.push(` ${line}`)
+  for (let k = 1; k <= ctxAfter; k++) {
+    const idx = suffixB + k
+    if (idx < linesB.length) out.push(` ${linesB[idx]}`)
   }
 
   return out.join("\n")

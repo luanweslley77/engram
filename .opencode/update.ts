@@ -64,7 +64,17 @@ function walkFiles(dir: string, base: string): string[] {
   return files
 }
 
-/** Byte-level comparison via Buffer.equals. Returns false if either path is unreadable or absent. */
+/**
+ * Byte-level comparison via Buffer.equals. Returns false if either path is
+ * unreadable or absent.
+ *
+ * Normalization of line endings is intentionally NOT performed here —
+ * that is handled by diffLines when generating the unified diff view.
+ * Consequence: a file differing only in CRLF vs LF is flagged as modified
+ * by contentsMatch (different bytes) but produces no unified diff entry
+ * (diffLines normalizes away the difference).
+ * The STEP 4e template guard covers the edge case of a missing .diff file.
+ */
 function contentsMatch(a: string, b: string): boolean {
   try {
     return readFileSync(a).equals(readFileSync(b))

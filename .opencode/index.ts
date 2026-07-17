@@ -229,18 +229,19 @@ STOP. Do not continue.
 Output: "Engram {manifest.from} → {manifest.to}"
 For each category in manifest.categories, output:
   "{name}: {added.length} added, {skipped.length} preserved"
-Mention that .opencode/.engram-update.diff has a detailed view of changes.
 Use the question tool:
   header: "Engram Update"
   question: "How to apply Engram {manifest.from} → {manifest.to}?"
   options:
     - "Auto (Recommended)" — refresh ALL preserved files
     - "Manual" — pick per file
+    - "View changes" — inspect diff before deciding
     - "Skip" — defer, remind next session
     - "Keep as-is" — skip permanently
 Route by selected option:
   "Auto" → STEP 4a
   "Manual" → STEP 4b
+  "View changes" → STEP 4e
   "Skip" → STEP 4c
   "Keep as-is" → STEP 4d
 
@@ -276,6 +277,15 @@ STOP.
 Call tool: engram_update({ target: "$TARGET", mode: "keep_as_is" })
 Output the tool's return message. Do NOT modify or paraphrase it.
 STOP.
+
+### STEP 4e — View changes
+// Edge case: .engram-update.diff may not exist even when the manifest
+// does — contentsMatch flags CRLF-only byte differences but diffLines
+// normalizes them away. The Read guard below handles this gracefully.
+Use Read tool: $TARGET/.engram-update.diff
+If Read tool fails (file does not exist): say "No diff available — files may differ only in line endings. Proceed with the update options." Then go back to STEP 4.
+Otherwise: summarize the changes to the user (which files changed and what the diffs show).
+Then go back to STEP 4 and present the options again.
 
 ### STEP 5 — State "in_progress": resume
 Output: "Resuming update — checkpoint found."
