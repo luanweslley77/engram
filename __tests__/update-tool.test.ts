@@ -63,6 +63,15 @@ describe("engramUpdateTool", () => {
       expect(existsSync(resolve(t(tmp), ".engram-update.jsonc"))).toBe(false)
       expect(existsSync(resolve(t(tmp), ".engram-version.jsonc"))).toBe(false)
     })
+
+    it("rejects path traversal paths silently", async () => {
+      const m = JSON.parse(readFileSync(resolve(t(tmp), ".engram-update.jsonc"), "utf-8"))
+      m.categories.skills.skipped.push("../../etc/passwd")
+      writeFileSync(resolve(t(tmp), ".engram-update.jsonc"), JSON.stringify(m))
+      const result = await call("auto")
+      expect(result).toContain("3 files deleted")
+      expect(result).not.toContain("4 files deleted")
+    })
   })
 
   describe("per_file mode", () => {
@@ -96,6 +105,13 @@ describe("engramUpdateTool", () => {
         { file: "unknown/file.md", action: "delete" },
       ])
       expect(result).toContain("not in manifest skipped list")
+    })
+
+    it("rejects path traversal paths", async () => {
+      const result = await call("per_file", [
+        { file: "../../etc/passwd", action: "delete" },
+      ])
+      expect(result).toContain("path outside target")
     })
 
     it("returns error when decisions array is empty", async () => {
@@ -180,6 +196,22 @@ describe("engramUpdateTool", () => {
       expect(result).toContain("2 categories pending")
       const manifest = JSON.parse(readFileSync(resolve(t(tmp), ".engram-update.jsonc"), "utf-8"))
       expect(manifest.state).toBe("in_progress")
+    })
+  })
+
+  describe("cleanup mode", () => {
+    it("deletes manifest and version files", async () => {
+      const result = await call("cleanup")
+      expect(result).toContain("State cleaned")
+      expect(existsSync(resolve(t(tmp), ".engram-update.jsonc"))).toBe(false)
+      expect(existsSync(resolve(t(tmp), ".engram-version.jsonc"))).toBe(false)
+    })
+
+    it("does not touch user skill files", async () => {
+      await call("cleanup")
+      expect(existsSync(resolve(t(tmp), "skills", "learn.md"))).toBe(true)
+      expect(existsSync(resolve(t(tmp), "skills", "review.md"))).toBe(true)
+      expect(existsSync(resolve(t(tmp), "agents", "assessor.md"))).toBe(true)
     })
   })
 

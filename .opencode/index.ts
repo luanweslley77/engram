@@ -216,8 +216,8 @@ Parse the JSON. Locate field: state.
 ### STEP 2 — If Read fails
 Condition: file not found OR JSON.parse fails.
 Then execute:
-  Bash: rm -f $TARGET/.engram-update.jsonc $TARGET/.engram-version.jsonc
-Output exactly: "No pending updates. State cleaned. Restart to apply."
+  Call tool: engram_update({ target: "$TARGET", mode: "cleanup" })
+Output the tool's return message. Do NOT modify or paraphrase it.
 STOP. Do not continue.
 
 ### STEP 3 — Route by manifest.state
