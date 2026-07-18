@@ -39,7 +39,23 @@ with a sandboxed `$HOME`.
   (AG hooks use a different mechanism). Stripping `tools:` was rejected deliberately: it
   would grant those agents all tools on Claude Code, trading a real restriction for a
   cosmetic registration.
-- Engine untouched (`ENGRAM_VERSION` pin only). Selftest unchanged at **214/214**.
+- **Engine: three shipped read-path bricks, found by this release's own fuzz gate** (§4.7:
+  800 randomized garbage states × 24 read paths — the 24 include every read-only
+  sub-action, per the amendment). All three predate this release; all three are the same
+  lesson again:
+  - `artifact list` crashed on an unhashable entry in `order` — because it hand-rolled the
+    walk instead of using `graph_order`, the helper whose docstring *names this exact
+    crash*. The checklist line "grep for the N+1th call site (`cmd_artifact` was the one
+    missed)" was written about this command in v1.0.1. It was still the one missed.
+  - `misconception list` crashed on a `None` entry (`it.get`) — reads now degrade past
+    non-dict entries; mutators still refuse an unusable file outright (a lossy "repair"
+    a mutator then saved would be data loss wearing a hard hat).
+  - `report` crashed rendering an int-typed misconception field (`escape(123)`) — the
+    dashboard, the one surface a human actually looks at, bricked by a hand-edited file.
+    Fixed at the gate: `_open_misconceptions` now coerces narrator-facing fields to text.
+  - Each fix carries a selftest check that asserts the *behavior* (the real entry survives
+    the garbage beside it), and each check was mutation-tested: revert the fix, that
+    specific check goes red. Selftest **214 → 217**. Re-fuzz after the fixes: **0 crashes**.
 
 ## 1.0.5 — 2026-07-18 · Hermes — the fourth platform, and the README stops being misread
 
