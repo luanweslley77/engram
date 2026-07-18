@@ -17,7 +17,7 @@
 
 > **The mix-up worth clearing first: Engram is not an agent-memory plugin.** It doesn't give your agent persistent memory, context, or knowledge of your codebase — memory MCPs and context tools do that, *for the agent*. Engram points the other way: **it's a learning system for the human.** Your agent becomes a tutor that makes you do the thinking, a blind examiner that checks you actually got it, and a scheduler that brings each idea back right before your brain drops it. The agent doesn't get smarter. **You do — measurably, with receipts.**
 
-Born as a Claude Code plugin; the same skills and engine now run on four agentic platforms, with a fifth in review:
+Born as a Claude Code plugin; the same skills and engine now run on five agentic platforms:
 
 ```bash
 claude plugin marketplace add nagisanzenin/engram
@@ -59,7 +59,7 @@ Engram is what's missing around the explanation: **a tutor that makes you do the
 | an independent examiner that grades you blind, in writing | self-assessed *"yeah, makes sense"* |
 | plain JSON files on your machine | a cloud service, account, or subscription |
 
-**Concretely, installing it gives you:** three commands (`/learn`, `/review`, `/coach` — exact spelling per platform in the table above), a quiet session nudge that tells you when reviews are due (and says nothing otherwise — on all four platforms), and a state folder at `~/.claude/learning/` that you own, can read, and share across every platform you use.
+**Concretely, installing it gives you:** three commands (`/learn`, `/review`, `/coach` — exact spelling per platform in the table above), a quiet session nudge that tells you when reviews are due (and says nothing otherwise — on every platform except Antigravity, whose hook port is pending), and a state folder at `~/.claude/learning/` that you own, can read, and share across every platform you use.
 
 ```
  recall
