@@ -1,5 +1,170 @@
 # Changelog
 
+## 1.0.8 — 2026-07-19 · OpenClaw — the sixth platform, and the tutor leaves the terminal
+
+Engram now installs on **[OpenClaw](https://docs.openclaw.ai)**, the self-hosted gateway
+that fronts an agent with Discord, Slack, Telegram, WhatsApp, iMessage, and Signal. Every
+claim below was verified against a live **2026.7.1-2** install on macOS, under an isolated
+`OPENCLAW_STATE_DIR` so nothing touched a real gateway or a real learning store.
+
+This is the first platform where `/review` happens on a phone. The FSRS schedule has always
+booked reviews for moments you are not at a desk; until now the tool only existed at one.
+
+- **One command:** `openclaw plugins install engram --marketplace nagisanzenin/engram`.
+  OpenClaw reads engram's existing Claude-compatible `marketplace.json` straight from
+  GitHub — no new manifest, no ClawHub publish. `/learn`, `/review`, and `/coach` register
+  as slash commands on every OpenClaw surface.
+
+- **Packaging: the `hooks` key was aimed at a file, and the capability report hid it.**
+  OpenClaw matches `.codex-plugin/plugin.json` *before* every other marker, so engram is
+  always a Codex bundle there — and for Codex bundles it reads the manifest's `hooks` value
+  as a list of **directories to scan for hook packs**. Engram declared
+  `"hooks": "./hooks/hooks.json"`, so the scanner was pointed at a *file*, found no
+  `*/HOOK.md`, and loaded nothing — while `plugins inspect` still cheerfully reported
+  `hooks` among the bundle capabilities. Declared-and-broken looked exactly like working.
+  The key is now **removed**, which is also the more correct manifest: OpenAI documents
+  that Codex auto-discovers `./hooks/hooks.json` when no `hooks` entry is present, so the
+  key was redundant on the platform it was written for. Both platforms now fall back to
+  their own documented conventions and both find their hooks.
+
+- **The nudge, ported as a hook pack** (`hooks/engram-due/` — `HOOK.md` + `handler.js`).
+  It binds to `command:new` and `command:reset` because those are the only two internal
+  hook events whose `event.messages` OpenClaw routes back to the conversation; the
+  `session:*` events exist but discard pushed output. Same contract as every other
+  platform: forwards what `engram.py session-start` prints, composes nothing itself, and
+  degrades to silence on missing `python3`, missing engine, non-zero exit, timeout, or
+  oversized output.
+
+- **A silent-failure trap worth naming, because it is the kind that reads as success.**
+  OpenClaw skips internal hook discovery entirely until something opts in, and shipping a
+  hook pack inside a plugin does *not* opt in. Without
+  `openclaw config set hooks.internal.enabled true`, `openclaw hooks list` shows
+  `engram-due ✓ ready` — correct events, requirements satisfied, green tick — and the hook
+  never runs once. Proven both ways in the gateway loader log: **zero** internal handlers
+  registered without the flag, `Registered hook: engram-due -> command:new, command:reset`
+  with it. The install doc leads with this rather than burying it in troubleshooting.
+
+- **The assessor stays blind, structurally.** No OpenClaw bundle format maps an `agents/`
+  directory into a usable registry — Claude-format bundles detect `agents` and explicitly
+  decline to execute them — so engram's three agents are not registered here. They are
+  spawned instead through `sessions_spawn`, whose default `context: "isolated"` starts the
+  child with a clean transcript: it sees the task text and nothing else of the tutoring
+  conversation. That is the assessor's blindness requirement met by construction rather
+  than by politeness. New `skills/_shared/subagents.md` carries the contract — children
+  read `agents/<name>.md` from the installed plugin rather than receiving an inlined copy,
+  so there remains exactly one definition of each agent across all six platforms, and it
+  states plainly that if `sessions_spawn` is absent under a narrow tool profile there is no
+  degraded mode: engram does not let the tutor grade its own learner.
+
+- **The engine-resolution snippet was rewritten because a live model got it wrong.** The
+  first port added OpenClaw as a second line — `[ -f "$ENGRAM" ] || ENGRAM="…"` after the
+  existing nested-default expression. A live `/review` then failed with
+  `Exec failed: python3 $HOME/.openclaw/extensions/engram/scripts/engram.py`: the model had
+  read two lines of shell and *paraphrased* them into one guessed path, and the guess was
+  wrong under a non-default state dir. `$OPENCLAW_STATE_DIR` was verified present in the
+  exec environment, so this was not a missing variable — it was a snippet that invited
+  improvisation. All three skills now carry one copy-and-run `for` loop over the candidate
+  roots, each guarded by an existence check, prefixed *"RUN THIS BLOCK VERBATIM — do not
+  substitute a path you guessed."* This also hardens the other five platforms: the old form
+  took the first *set* variable even when nothing was there, the new one takes the first
+  root that actually **exists**. Verified identical across bash, zsh, and POSIX sh, and
+  under each platform's env layout.
+
+- **And then that rewrite introduced its own regression, caught by a blind agent read.**
+  The first draft ended in `: "${ENGRAM:?engram engine not found…}"`. In a **dev clone** —
+  no plugin-root variable set, which is exactly how contributors run this repo — nothing
+  matched, and `:?` **aborts the shell**, killing the rest of the block. The old code failed
+  softer there and let the skill's prose fallback recover. Two fixes: `$PWD` and
+  `git rev-parse --show-toplevel` are now the final candidates (so a dev clone resolves at
+  all, which the old chain never did either), and the hard `:?` became a non-fatal warning
+  on stderr. The finding came from handing the edited files to an uncontaminated agent and
+  asking only *"which mechanism applies to you, and does the block succeed?"* — a question
+  no test in this repo asks.
+
+- **Known ordering caveat, unchanged from previous releases and deliberately left alone:**
+  the Antigravity staging path is checked *before* `$PWD`, so on a machine carrying a stale
+  Antigravity install, a dev clone will silently run the installed engine rather than the
+  checkout. Reordering would change resolution behavior on a supported platform to fix a
+  contributor-only papercut, which is the wrong trade in a release whose whole claim is
+  "no regressions elsewhere."
+
+- **The cross-platform prose was made platform-agnostic after a pollution check.** The
+  first draft wrote *"On OpenClaw, engram's agents are not registered — call
+  `sessions_spawn`…"* into all three **shared** skills, which every platform's agent reads.
+  A blind agent test flagged the branch as stated in terms of two platforms with Claude
+  Code's own `Agent`/Task tool never named, and noted the skills use bare agent names where
+  that platform requires a namespaced `engram:engram-assessor`. Rewritten to describe the
+  *property* — "a fresh-context child running that agent's definition" — and to name both
+  mechanisms. Re-tested blind: correct tool, correct namespaced type, three separate
+  spawns for the audit, and no ambiguity reported.
+
+- **Verified live, not merely wired.** Driven against `gpt-5.4` with `ENGRAM_HOME` pointed
+  at a throwaway store: a model asked to name its learning skills answered
+  `coach`/`learn`/`review`; `/review` and `/coach` produced real output end-to-end; the
+  hook was observed on a live `/new` resolving the engine and pushing the 217-character
+  nudge; and the assessor round-trip completed — an isolated child read
+  `agents/engram-assessor.md` and returned a valid receipt (`recalled`/`easy`, `rubric_notes`
+  quoting both criteria). **The child's prompt was read out of the trajectory log and
+  contained only the task text** — the blindness claim is now evidence, not architecture.
+  A negative case landed too: pointed at a missing instructions file the child returned
+  `{"status":"blocked"}` and declined to grade rather than inventing a verdict.
+
+- **Still not claimed:** delivery of the nudge into a real chat surface. The push onto
+  `event.messages` is proven; routing needs a connected channel, and the CLI `agent` path
+  has no conversation to reply into. `/learn` end-to-end and the artifact smith are also
+  unverified. §5.6 discipline: the unverified list ships with the release.
+
+- **A testing note worth writing down, because it produced a false negative for three
+  rounds.** `pkill -f "openclaw.mjs gateway run"` matches nothing — the Gateway renames its
+  process to `openclaw-gateway`. Three consecutive "the hook never fires" results were
+  actually the *original* gateway still holding the port and serving a stale copy of the
+  handler; the new instrumented process was exiting on `Port already in use` while its log
+  scrolled past unread. The hook had been firing correctly the whole time. Stop it with
+  `openclaw gateway stop` or by PID, and check that the port is free before concluding
+  anything about a hook.
+
+- Upstream discrepancy, reported here for the next reader: OpenClaw's own
+  `docs/plugins/bundles.md` states native manifests win detection ("If a directory contains
+  both, OpenClaw uses the native path"), but the shipped `detectBundleManifestFormat`
+  checks `.codex-plugin/plugin.json` first and only reaches `openclaw.plugin.json` fourth.
+  An `openclaw.plugin.json` was written, tested, observed to be inert, and **deliberately
+  not shipped** — it would do nothing today and would silently change engram's plugin shape
+  the day upstream makes the code match the docs.
+
+- **The adversarial pass found one of its own release's claims to be false.** `HOOK.md` said
+  *"Every failure path degrades to silence"* — but only the **engine** call was inside a
+  `try`. Delivery was not: `event.messages.push(...)` throws if `messages` is frozen, absent,
+  or not an array, and a thrown handler is not a silent one. Two mitigating facts, both
+  verified in OpenClaw's shipped source: `triggerInternalHook` wraps every handler in
+  try/catch and logs, so this could never break a session; and `createInternalHookEvent`
+  always supplies a real extensible array, so the normal path cannot reach it. Severity is
+  therefore low — but *"the host catches my exception"* is not silence, it is a line in an
+  operator's error log, and a hook that advertises silence should not be relying on its host
+  to keep that promise. Delivery is now guarded too, which makes the documented contract true
+  unconditionally rather than by courtesy of the runtime. Found by attacking the handler with
+  frozen/absent/non-array `messages` and a throwing `push` — cases the earlier unit test
+  missed because it ran against an *empty* store, where the handler returns before ever
+  reaching delivery. **A negative test that exits early proves nothing about the code past the
+  exit.**
+
+- **Gates.** Selftest **217/217** (unchanged — no engine behavior changed, so no new check was
+  owed; §4.5 mutation-testing is therefore N/A this release). OpenCode suite **88/88**. Fuzz
+  gate re-run against the final commit across every read path enumerated from the dispatch
+  table plus the read-only sub-actions the table cannot see: **0 crashes / 500 states / 2
+  seeds**, the §4.7 target exactly. Live engine test
+  green — `s_after` 3.71 → 29.55 across a day-11 review, `momentum.recalled_7d` matching
+  `reviews_7d` (the v1.0.7 fix holding), `retention` carrying its `grader_unvalidated`,
+  `doctor ok=true`.
+
+- **§5's read-only check needs an amendment, and it is not a v1.0.8 bug.** Hashing
+  `~/.claude/learning` before and after every read path reports a mutation — traced to
+  `report`, whose documented job is writing `artifacts/dashboard.html`. `report` is
+  classified non-mutating in the dispatch table because it touches no *learning state*, so
+  the protocol's own enumeration recipe hands it to a gate that then fails on it. Re-run with
+  `report` excluded, every read path leaves the store byte-identical, and no state file is
+  touched. **The gate should exempt `report` (or compare state files only)** — as written it
+  cries wolf on every release, which is how a real read-path write would get waved through.
+
 ## 1.0.7 — 2026-07-19 · a flattering number, caught by the gate built for it
 
 One engine fix, shipped hours after v1.0.6 because RELEASE_PROTOCOL §7.5 says a wrong

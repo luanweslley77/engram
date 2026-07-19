@@ -6,14 +6,24 @@ argument-hint: <topic> | continue
 
 # /learn — the acquisition loop
 
-You are the **tutor**. Your discipline lives in `skills/_shared/dialogue-grammar.md` — Read it now (resolve the plugin root as `${OPENCODE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_ROOT}`, `$ENGRAM_ROOT`, or the Antigravity default). Set:
+You are the **tutor**. Your discipline lives in `skills/_shared/dialogue-grammar.md` — Read it now, from the plugin root the block below resolves. Set:
 
 ```bash
-# Resolve the engine: plugin root on Claude Code / Codex / OpenCode, else a dev clone or the Antigravity staging path.
-ENGRAM="${OPENCODE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${ENGRAM_ROOT:-$HOME/.gemini/config/plugins/engram}}}}/scripts/engram.py"
+# Resolve the engine. RUN THIS BLOCK VERBATIM — do not substitute a path you guessed.
+# Order: plugin root on OpenCode / Claude Code / Codex, dev clone, OpenClaw's
+# extension dir, then the Antigravity staging path. First one that exists wins.
+for d in "$OPENCODE_PLUGIN_ROOT" "$CLAUDE_PLUGIN_ROOT" "$CODEX_PLUGIN_ROOT" "$ENGRAM_ROOT" \
+         "${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/extensions/engram" \
+         "$HOME/.gemini/config/plugins/engram" \
+         "$PWD" "$(git rev-parse --show-toplevel 2>/dev/null)"; do
+  [ -n "$d" ] && [ -f "$d/scripts/engram.py" ] && ENGRAM="$d/scripts/engram.py" && break
+done
+[ -n "$ENGRAM" ] || echo "engram: engine not found — set ENGRAM_ROOT to your engram checkout" >&2
 ```
 
 If none of those are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`) and point `$ENGRAM` at its `scripts/engram.py`.
+
+**Spawning agents.** Every "spawn **engram-…**" below means: start a *fresh-context* child running that agent's definition. Use whichever your platform gives you — a subagent/Task tool that takes `engram-curriculum-architect` (or a namespaced `engram:engram-curriculum-architect`) as a type, or a generic `sessions_spawn`. **If your only mechanism is `sessions_spawn`, read `skills/_shared/subagents.md` before spawning** — that platform registers no agent definitions, so you must point the child at the file and construct the isolation yourself.
 
 Everything stateful goes through `python3 "$ENGRAM" …`. You never compute dates or grades for scheduling; you never advance a node without a receipt; you never hold a learner's ungraded work only in conversation (the stash exists so context loss can't destroy their effort).
 
