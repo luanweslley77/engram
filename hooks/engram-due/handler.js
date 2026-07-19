@@ -51,7 +51,15 @@ const handler = async (event) => {
     .join("\n");
 
   if (!nudge) return;
-  event.messages?.push(nudge);
+
+  // Delivery is guarded too, not just the engine call. OpenClaw does wrap handlers
+  // in try/catch, but "the host logs my exception" is not the same as silence, and
+  // the contract this hook advertises is silence on every failure path.
+  try {
+    event.messages.push(nudge);
+  } catch {
+    /* frozen, absent, or non-array messages — nothing to deliver into */
+  }
 };
 
 export default handler;

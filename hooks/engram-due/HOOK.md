@@ -30,8 +30,15 @@ the nudge binds to those rather than `session:*` or `gateway:startup`.
 
 Every failure path degrades to silence: no `python3`, no engine on disk, a
 non-zero exit, a timeout, or unparseable output all return without pushing a
-message. A learning tool that breaks someone's chat session has already lost
-more than the nudge was worth.
+message — and **delivery is guarded too**, so a frozen, absent, or non-array
+`event.messages` is swallowed rather than thrown. A learning tool that breaks
+someone's chat session has already lost more than the nudge was worth.
+
+OpenClaw does wrap hook handlers in try/catch and log their exceptions, so a
+throw here could not break a session either way. That is not the standard this
+hook holds itself to: an exception the host caught is a line in an operator's
+error log, not silence, and the promise above should not depend on the runtime
+keeping it.
 
 ## Enabling
 

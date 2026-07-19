@@ -131,10 +131,27 @@ booked reviews for moments you are not at a desk; until now the tool only existe
   not shipped** — it would do nothing today and would silently change engram's plugin shape
   the day upstream makes the code match the docs.
 
+- **The adversarial pass found one of its own release's claims to be false.** `HOOK.md` said
+  *"Every failure path degrades to silence"* — but only the **engine** call was inside a
+  `try`. Delivery was not: `event.messages.push(...)` throws if `messages` is frozen, absent,
+  or not an array, and a thrown handler is not a silent one. Two mitigating facts, both
+  verified in OpenClaw's shipped source: `triggerInternalHook` wraps every handler in
+  try/catch and logs, so this could never break a session; and `createInternalHookEvent`
+  always supplies a real extensible array, so the normal path cannot reach it. Severity is
+  therefore low — but *"the host catches my exception"* is not silence, it is a line in an
+  operator's error log, and a hook that advertises silence should not be relying on its host
+  to keep that promise. Delivery is now guarded too, which makes the documented contract true
+  unconditionally rather than by courtesy of the runtime. Found by attacking the handler with
+  frozen/absent/non-array `messages` and a throwing `push` — cases the earlier unit test
+  missed because it ran against an *empty* store, where the handler returns before ever
+  reaching delivery. **A negative test that exits early proves nothing about the code past the
+  exit.**
+
 - **Gates.** Selftest **217/217** (unchanged — no engine behavior changed, so no new check was
   owed; §4.5 mutation-testing is therefore N/A this release). OpenCode suite **88/88**. Fuzz
   gate re-run against the final commit across every read path enumerated from the dispatch
-  table plus the read-only sub-actions the table cannot see: **0 crashes**. Live engine test
+  table plus the read-only sub-actions the table cannot see: **0 crashes / 500 states / 2
+  seeds**, the §4.7 target exactly. Live engine test
   green — `s_after` 3.71 → 29.55 across a day-11 review, `momentum.recalled_7d` matching
   `reviews_7d` (the v1.0.7 fix holding), `retention` carrying its `grader_unvalidated`,
   `doctor ok=true`.
