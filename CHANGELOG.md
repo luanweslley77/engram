@@ -49,11 +49,27 @@ progmiscon.org). The assessor gains the execution duty and `error_class`, with
 right-answer-wrong-method capped at `partial` — the step-graded LLM literature is bimodal,
 and reference-plus-engineered-rubric is the configuration that reaches human parity.
 
-**The grader is measured on solutions before its solution verdicts count.** The gold set
-grows 66 → **86** (20 adversarial procedure items: right-answer-wrong-method,
-slip-vs-conceptual both directions, fluent-wrong-step, terse-but-correct-solution,
-alternate-valid-method, clean/lapsed/boundary anchors — every number verified by execution
-at authoring time).
+**The grader is measured on solutions before its solution verdicts count — and the
+measurement bit back.** The gold set grows 66 → **86** (20 adversarial procedure items:
+right-answer-wrong-method, slip-vs-conceptual both directions, fluent-wrong-step,
+terse-but-correct-solution, alternate-valid-method, clean/lapsed/boundary anchors — every
+number verified by execution at authoring time).
+
+Extending the set falsified the badge. **v0.7's "0 of 198 · it has never once inflated a
+grade" did not survive**: three audits over **774 judgments** caught **3 real inflations**,
+and both root causes were ambiguities in the grader's *own instructions* —
+
+- `cap at partial` was read as an instruction to **award** partial rather than to limit it
+  (one run wrote "MISSED" against all three criteria and then graded `partial`);
+- the right-answer-wrong-method tiebreak **this release introduced** generalized into a
+  universal criteria-counting rule that overrode `lapsed = core absent or wrong`.
+
+Both are closed; the shipping spec measures **0 inflations in 258 judgments**, and the badge
+now reads `0/258` with that history stated rather than hidden. Every fix made the grader
+*stricter*, so agreement with the author fell as safety rose (QWK 0.983 → 0.964) — and the
+two categories where all three runs now disagree with the author are **left contested on
+purpose**, because three rounds of conceding to your own instrument is not adjudication.
+Full account: [`docs/release-audits/v1.1.0-grader-audit.md`](docs/release-audits/v1.1.0-grader-audit.md).
 
 **Still honestly open** (docs/11 §7): FSRS has no published validation on procedural skill
 (DAS3H is the citable precedent; `by_kind` is the per-learner instrument); slip pricing is
