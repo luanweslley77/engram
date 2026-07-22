@@ -48,6 +48,7 @@ AskUserQuestion(questions=[{
 ```
 
 - **Map the answer to `--confidence`:** Certain→`90`, Pretty sure→`70`, Half unsure→`50`, Just guessing→`25`. AskUserQuestion **always** offers a built-in **"Other"** — that's their escape to type an exact number, or to skip. Skip / dismiss → record **`confidence: null`**. Null is honest; do not infer one.
+- **No picker tool on your platform?** Present the same four labeled bands as a plain-text pick (they answer with the label; map identically; skip/no answer → null). The integrity rules are about the *shape* — a one-tap/one-word band chosen before any feedback — never about the tool's name. A typed 0–100 request stays forbidden everywhere.
 - **Fire it BEFORE any feedback, every time** — and "feedback" means *any* signal of correctness, not just the answer text. No *"that's complete,"* no *"close,"* no *"nice,"* no approving tone before the pick. A confidence collected after the learner has been told *or shown* how they did is corrupt — discard it as null rather than record it.
 - **A picked band is the learner's own stated confidence, not an invented number** — that is why the menu is allowed. Still forbidden: inferring a number from tone, speed, hedging, or your impression. Picker-or-null, never a guess.
 - **Confidence is metadata, not knowledge**, so it may be a menu; the *probe* itself is never multiple-choice (see "Menus for navigation, never for knowledge"). The answer stays open free-recall; only the sureness is a pick.

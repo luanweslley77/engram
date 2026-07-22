@@ -47,9 +47,11 @@ The rubric in the stash entry is the node's step rubric, as authored.
 - **Compute the answer key by EXECUTION before presenting** — run the arithmetic/code
   (`python3 -c …`), never trust your own inspection; generated problems carry a measured
   ~3–5% wrong-key rate even in execution-checked pipelines, and a wrong key here becomes a
-  false lapse on the learner's schedule. If the frame's `verify` says how, use it. If the
-  content genuinely cannot be executed, solve it once fully in your own working notes before
-  serving, and keep the instance close to the frame's bounds.
+  false lapse on the learner's schedule. If the frame's `verify` says how, use it. If
+  execution is impossible — the content is not executable, *or your platform gives you no
+  execution tool* — solve the instance fully in your own working notes before serving, keep
+  it close to the frame's bounds, and write `unverified-by-execution` into the rating's
+  notes so the record stays honest.
 - **Stay inside the frame's bounds** — they exist to hold difficulty roughly fixed;
   difficulty drift is real and text-judged difficulty is unreliable. If the learner's lapse
   pattern says instances are drifting hard, say so and regenerate closer to the canonical
