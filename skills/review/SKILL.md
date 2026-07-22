@@ -54,7 +54,9 @@ The rules that keep this from becoming the thing this project despises:
 
 ## 2 · Per item — the retrieval protocol
 
-The `due` payload gives you `probe`, `claim` (canonical answer), and `rubric`. Show a progress marker per item: `[3/6] · residual-stream †`. The order of operations is sacred:
+The `due` payload gives you `probe`, `claim` (canonical answer), and `rubric` — plus `node_kind` and `practice` (v1.1). Show a progress marker per item: `[3/6] · residual-stream †`. The order of operations is sacred:
+
+**`node_kind: "procedure"` items first take a detour** (Read `skills/_shared/problem-grammar.md` once per session when one appears): serve a **fresh instance** generated from `practice.problem_frame` instead of the stored probe (compute the answer key by execution before showing anything); when a `practice.discriminates_from` sibling is co-due, open with the naming step ("which technique, and why?"). Grade the solve with the problem grammar's table — method-wrong caps the grade regardless of the answer; a slip-only miss is `partial`/`hard` with `--error-class slip`, a wrong-method one carries `--error-class conceptual`. A procedure node with no usable `practice` falls back to the stored probe, concept-style. Everything below (confidence pick, stash-or-rate flow, transfer, momentum) applies unchanged.
 
 1. Show the **probe only**. Free recall — no options, no hints in the prompt, no "remember when we...". Do **not** ask them to type a confidence number.
 2. They produce. (Silence is fine; "no idea" is an answer — treat as lapse, warmly.) **Then collect confidence by calling `AskUserQuestion` (the four-band Confidence picker — exact call in grammar ⚠), BEFORE the reveal.** Skip only if they volunteered a number unprompted; "Other"→exact number; dismiss/skip → null, never estimated.

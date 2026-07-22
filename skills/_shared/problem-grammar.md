@@ -1,0 +1,91 @@
+# The Problem Grammar (procedure nodes — read when a node or due item carries `node_kind: "procedure"`)
+
+Engram stays a general learn-anything system: this file activates **per node**, only when the
+curriculum architect declared that node a `procedure` (a skill executed on instances — a git
+workflow, a statistical test choice, an integral — as against a `concept`, which keeps the
+ordinary dialogue grammar untouched). Theory: `docs/11-the-procedure-gap.md`. Everything in
+the dialogue grammar still binds here — confidence integrity, stash-immediately, menus-never-
+for-knowledge, the oath. This file changes only *what the practice act is*.
+
+## Encoding a procedure node (replaces beats 2–4; beats 1 and 5–8 unchanged)
+
+The **ladder** (worked example → solving, faded by measured competence — never by vibes):
+
+- **L1 · worked example.** Show a complete worked solution to ONE instance (the node's
+  `probe` is the canonical instance). At each step, the learner explains *why that step*
+  (“what licenses this move?”) before seeing the next. Prediction-before-resolution survives
+  in miniature: “what's the next move?” is asked, cheaply, before each reveal.
+- **L2 · completion.** A fresh instance, worked until the last step(s); the learner executes
+  the ending.
+- **L3 · faded.** A fresh instance with the *principle-bearing* interior step(s) blank — the
+  blank is where the encoding happens, so fade the step that carries the idea, not the
+  arithmetic.
+- **L4 · cold solve.** A fresh instance, nothing given.
+
+**Rung selection** = the worked-drive signals (docs/06): failed/skipped pretest or weak
+`requires` → start L1; comfortable prior exposure → start L3; a lapse at any rung drops one
+rung on the next instance; a clean fast solve climbs. Never hold a competent learner at L1 —
+assistance flips harmful with expertise (expertise reversal). The concept node that
+*licenses* the procedure keeps the native PREDICT→STRUGGLE opening (attempt-first is for
+ideas; the ladder is for execution).
+
+**VERIFY** for a procedure node = a fresh-instance solve at the highest rung reached,
+stashed verbatim as the production (their steps, their answer — note omissions factually).
+The rubric in the stash entry is the node's step rubric, as authored.
+
+## Fresh instances (the isomorph rule)
+
+- **Never re-serve stored numbers.** At review, and from L2 up, generate a new instance from
+  `practice.problem_frame` (what varies / what stays). Re-serving the same instance converts
+  the procedure into a memorized fact.
+- **Compute the answer key by EXECUTION before presenting** — run the arithmetic/code
+  (`python3 -c …`), never trust your own inspection; generated problems carry a measured
+  ~3–5% wrong-key rate even in execution-checked pipelines, and a wrong key here becomes a
+  false lapse on the learner's schedule. If the frame's `verify` says how, use it. If the
+  content genuinely cannot be executed, solve it once fully in your own working notes before
+  serving, and keep the instance close to the frame's bounds.
+- **Stay inside the frame's bounds** — they exist to hold difficulty roughly fixed;
+  difficulty drift is real and text-judged difficulty is unreliable. If the learner's lapse
+  pattern says instances are drifting hard, say so and regenerate closer to the canonical
+  instance.
+
+## The discrimination beat (interleaving's active ingredient)
+
+When a due procedure node has `practice.discriminates_from` siblings that are also due (or
+mature), open the item with the **naming step**: present the fresh instance and ask *“which
+technique applies here — and what in the problem tells you?”* — then the solve. Blocked
+practice tells the learner the strategy; a real problem arrives unlabeled. Never turn the
+naming step into a menu (it is knowledge; menus are for navigation).
+
+## Grading a procedure production (tutor at /review; assessor everywhere else)
+
+Before any rating: **verify the answer and every checkable intermediate by execution.**
+Then locate the controlling error:
+
+| Observed | grade | rating | `--error-class` |
+|---|---|---|---|
+| Method right, execution right | `recalled` | `good`/`easy` | — |
+| Method right, arithmetic/transcription slip only | `partial` | `hard` | `slip` |
+| **Right answer, wrong/absent method** | at best `partial` | `hard` | `conceptual` |
+| Method wrong or missing, wherever the answer landed | `lapsed` | `again` | `conceptual` |
+
+A slip is not a memory lapse — it is priced gentler (`partial`/`hard`) and never logged as a
+misconception; a *recurring* slip pattern (same sign error thrice) is its own misconception
+entry. Right-answer-wrong-method is the trap the grader must not fall for: the answer is not
+the knowledge (the derivable-owes-a-why rule, transposed to execution). When torn between
+`slip` and `conceptual`, choose `conceptual` — the flattering read (“you knew it, you just
+slipped”) is the direction the schedule cannot afford.
+
+## The erroneous-example rung (earned, never for novices)
+
+Only after the learner's **first clean solve** on the node (error-finding harms true
+novices): present a worked solution seeded with ONE bug — from `practice.error_bank` or,
+better, from the learner's own misconception log — and ask them to find, explain, and fix
+it. Grade the find-and-fix as an ordinary production. This is also the preferred re-encode
+move on a second lapse (review special cases), *if* the node has had a clean solve before.
+
+## Session shape
+
+Procedure items cost more minutes than recall items. In Sprint mode, one procedure item is a
+full session; never stack three solves to “catch up” — the two-minute floor and the mode
+budget outrank completeness, exactly as everywhere else in Engram.

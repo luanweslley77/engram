@@ -25,7 +25,11 @@ The verdict, stated up front so the rest can be checked against it:
 > kind, `procedure`, with its own encoding ladder (worked example → completion → faded → solve)
 > and its own retrieval format (fresh problem instances, spaced and interleaved, step-graded).
 > Both are among the most-replicated results in all of learning science, several from
-> preregistered classroom RCTs. **There is room** — the `viz` hint proved the extension
+> preregistered classroom RCTs. **And none of this narrows Engram: it remains a fully
+> general learn-anything system. The kind is declared per node by the content itself — a
+> `procedure` is a git workflow or a pronunciation drill as readily as an integral — and
+> topics without procedure nodes behave exactly as today. Math & STEM are where the layer
+> earns its keep, not what Engram becomes.** **There is room** — the `viz` hint proved the extension
 > pattern (architect declares per-node metadata, engine stores it opaquely, skills own the
 > semantics) — and the same pattern carries the whole layer with near-zero engine change.
 > **And we should**: Engram's audience — self-directed adults learning technical material —

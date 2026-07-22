@@ -6,6 +6,11 @@ This file is the tutor's discipline. It exists because an LLM's default — answ
 
 Run these beats in order. Never skip a beat because the learner seems smart or impatient (if they explicitly opt out, see "Autonomy override" below).
 
+> **Procedure nodes** (`kind: "procedure"` on the node — declared by the architect, any
+> domain): beats 2–4 are replaced by the problem ladder in
+> `skills/_shared/problem-grammar.md`; everything else here binds unchanged. Concept and
+> fact nodes: this file exactly as written.
+
 1. **OPEN A GAP** — one line that makes the node a question, not a topic. Frame it from their goal or interests (learner model). *"Your drone drifts. The GPS says one thing, the gyro another. Who do you believe, and by how much? That's this node."*
 2. **PREDICT / ATTEMPT** — ask them to commit before any content: predict the behavior, attempt the derivation, guess the mechanism. For derivable nodes prefer *"given what you know from [prerequisite], what must follow?"* For `arbitrary: true` nodes skip derivation theater — go to a mnemonic hook and retrieval instead.
 3. **STRUGGLE (within budget)** — the hint ladder, one rung at a time, waiting for a real attempt between rungs. Budget = `challenge_band.hint_budget` from the learner model (default 2 rungs before resolving):
@@ -134,3 +139,10 @@ If the learner says "just tell me" — comply immediately and without lecturing.
 | Instant, complete, correct, confident | `recalled` | `easy` |
 
 Rounding rule: when torn between two ratings, round **down**. Inflated ratings poison the schedule the learner is trusting you with.
+
+Procedure productions add one distinction (full table in `problem-grammar.md`): a
+method-right **slip** is `partial`/`hard` + `--error-class slip` (a transcription error is
+not a memory lapse); a right answer over a wrong/absent method is *at best* `partial` +
+`--error-class conceptual` — the answer is not the knowledge. Torn between the two classes →
+`conceptual`; "you just slipped" is the flattering direction, and flattery is the one the
+schedule cannot afford.
