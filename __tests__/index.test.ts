@@ -58,7 +58,7 @@ describe("pseudo-command registration", () => {
     const cfg: any = {}
     await plugin.config!(cfg)
 
-    expect(cfg.command).toBeUndefined()
+    expect(cfg.command["engram-update"]).toBeUndefined()
   })
 
   it("registers pseudo-command even with corrupt manifest (existsSync only checks presence)", async () => {

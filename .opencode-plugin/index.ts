@@ -43,7 +43,7 @@
  * Config hook + bridge
  * --------------------
  *
- *   1. NPM mode: selfExtract() — idempotent via .engram-version.jsonc.
+ *   1. selfExtract() — idempotent via .engram-version.jsonc.
  *   2. First-execution bridge (freshlyExtracted):
  *      agents   → registerAgents(cfg, root) — reads agents/*.md frontmatter,
  *                 parses custom tools strings to OpenCode object format.
@@ -174,8 +174,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { registerAgents } from "./agents.js"
 import { createSessionStartHooks } from "../hooks/session-start.js"
 import { createShellEnvHook } from "../hooks/shell-env.js"
-import { detectInstallType } from "./install-type.js"
-import { selfExtract, getExtractTarget, getVERSION, syncProjectState } from "./install.js"
+import { selfExtract, getVERSION, syncProjectState } from "./install.js"
 import { createPluginLogger } from "./logger.js"
 import { engramUpdateTool } from "./update-tool.js"
 
@@ -330,18 +329,10 @@ export const server: Plugin = async ({ client, $, directory }) => {
     async config(input) {
       try {
         const cfg = input as any
-      const { type } = detectInstallType(root)
-
-      let target: string
-      let freshlyExtracted = false
-      if (type === "npm") {
-        const logger = createPluginLogger(client)
-        const result = selfExtract(root, cwd, getVERSION(root), logger)
-        target = result.target
-        freshlyExtracted = result.freshlyExtracted
-      } else {
-        target = getExtractTarget(cwd)
-      }
+      const logger = createPluginLogger(client)
+      const result = selfExtract(root, cwd, getVERSION(root), logger)
+      const target = result.target
+      const freshlyExtracted = result.freshlyExtracted
 
       // Every session, not just on a version bump — see syncProjectState().
       try { syncProjectState(target, createPluginLogger(client)) } catch {}
