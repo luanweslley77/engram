@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { tmpdir } from "node:os"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { getExtractTarget, needsExtract, readPrevVersion, copyMissing, selfExtract, getVERSION, resolveAgentsPath, writeOrPrependAgentsMd } from "../.opencode/install"
+import { getExtractTarget, needsExtract, readPrevVersion, copyMissing, selfExtract, getVERSION, resolveAgentsPath, writeOrPrependAgentsMd } from "../.opencode-plugin/install"
 
 describe("getExtractTarget", () => {
   let tmp: string

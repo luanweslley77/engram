@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { execSync } from "node:child_process"
-import { selfExtract, syncProjectState, writeOrPrependAgentsMd } from "../.opencode/install"
+import { selfExtract, syncProjectState, writeOrPrependAgentsMd } from "../.opencode-plugin/install"
 
 describe("git filter integration", () => {
   let tmp: string

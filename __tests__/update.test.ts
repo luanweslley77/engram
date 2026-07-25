@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { tmpdir } from "node:os"
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { writeUpdateManifest, readManifest, saveManifest, clearUpdate, getUpdateSummary } from "../.opencode/update"
+import { writeUpdateManifest, readManifest, saveManifest, clearUpdate, getUpdateSummary } from "../.opencode-plugin/update"
 
 /** Creates a real source dir with 4 categories, each containing file.md that differs from dest. */
 function setupRealDirs(base: string): string {

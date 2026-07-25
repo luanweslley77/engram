@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { detectInstallType } from "../.opencode/install-type"
+import { detectInstallType } from "../.opencode-plugin/install-type"
 
 describe("detectInstallType", () => {
   it("detects npm when path contains node_modules", () => {
