@@ -7,7 +7,7 @@ import { writeUpdateManifest, readManifest, saveManifest, clearUpdate, getUpdate
 /** Creates a real source dir with 4 categories, each containing file.md that differs from dest. */
 function setupRealDirs(base: string): string {
   const src = resolve(base, "src-pkg")
-  for (const cat of ["skills", "agents", "scripts", "command"]) {
+  for (const cat of ["skills", "agents", "scripts", "commands"]) {
     mkdirSync(resolve(src, cat), { recursive: true })
     writeFileSync(resolve(src, cat, "file.md"), "v2")
     mkdirSync(resolve(base, cat), { recursive: true })
@@ -43,7 +43,7 @@ describe("update manifest state machine", () => {
     expect(m.categories.skills).toBeDefined()
     expect(m.categories.agents).toBeDefined()
     expect(m.categories.scripts).toBeDefined()
-    expect(m.categories.command).toBeDefined()
+    expect(m.categories.commands).toBeDefined()
     expect(Array.isArray(m.categories.skills.added)).toBe(true)
     expect(Array.isArray(m.categories.skills.skipped)).toBe(true)
   })

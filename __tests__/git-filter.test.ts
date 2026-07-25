@@ -42,7 +42,7 @@ describe("git filter integration", () => {
 
     const gitExclude = readFileSync(resolve(tmp, ".git", "info", "exclude"), "utf-8")
     expect(gitExclude).toContain("AGENTS.md")
-    expect(gitExclude).toContain(".engram-*")
+    expect(gitExclude).toContain(".opencode/")
   })
 
   it("does NOT duplicate filter on second extract", () => {
@@ -183,7 +183,7 @@ describe("git filter integration", () => {
     try {
       // Extract should succeed — commands and version file are written
       selfExtract(pkg, tmp, "1.0.2")
-      expect(existsSync(resolve(target, "command", "learn.md"))).toBe(true)
+      expect(existsSync(resolve(target, "commands", "learn.md"))).toBe(true)
       expect(existsSync(resolve(target, ".engram-version.jsonc"))).toBe(true)
     } finally {
       chmodSync(resolve(tmp, ".git", "config"), 0o644)
@@ -426,7 +426,7 @@ describe("filter lifecycle (real git)", () => {
    *
    * Would have caught:
    *   — unquoted ; truncation in git-config
-   *   — .engram-* leaking through git
+   *   — .opencode/ leaking through git
    *   — exclude blocking git add
    */
   it("git add+commit strips Engram block, checkout restores it", () => {
@@ -642,8 +642,8 @@ describe("AGENTS.md exclude tracks CONTENT, not authorship", () => {
 
     expect(excludeText().split("\n").some((l) => l.trim() === "AGENTS.md")).toBe(false)
     expect(messages.some((m) => m.includes("un-excluded"))).toBe(true)
-    // .engram-* is unconditional — those files are always internal.
-    expect(excludeText().split("\n").some((l) => l.trim() === ".engram-*")).toBe(true)
+    // .opencode/ is unconditional — the extracted directory is always internal.
+    expect(excludeText().split("\n").some((l) => l.trim() === ".opencode/")).toBe(true)
   })
 
   it("does not re-exclude on a later session once user content is there", () => {

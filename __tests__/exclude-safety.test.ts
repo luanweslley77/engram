@@ -54,7 +54,7 @@ describe("user's .git/info/exclude survives", () => {
 
     expect(after).toBe(first)
     expect((after.match(/^AGENTS\.md$/gm) || []).length).toBe(1)
-    expect((after.match(/^\.engram-\*$/gm) || []).length).toBe(1)
+    expect((after.match(/^\.opencode\/$/gm) || []).length).toBe(1)
   })
 
   it("does not touch a user's own hand-written AGENTS.md exclude line when they own the file", () => {

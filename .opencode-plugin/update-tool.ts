@@ -87,7 +87,7 @@ function isWithinTarget(target: string, filePath: string): boolean {
 export const engramUpdateTool = tool({
   description: "Apply Engram plugin updates — delete preserved files and update the manifest. Only call when the /engram-update command instructs you.",
   args: {
-    target: tool.schema.string().describe("Target .opencode-plugin directory"),
+    target: tool.schema.string().describe("Target .opencode directory"),
     mode: tool.schema.enum(["auto", "per_file", "keep_as_is", "skip", "checkpoint", "cleanup"]).describe("Update mode"),
     decisions: tool.schema.array(tool.schema.object({
       file: tool.schema.string().describe("Relative file path from manifest categories"),

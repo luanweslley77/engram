@@ -14,7 +14,7 @@
  * On fresh install, no manifest — bridge registers agents/commands/skills in config hook.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, unlinkSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, unlinkSync, rmSync } from "node:fs"
 import { resolve, basename } from "node:path"
 import { execSync } from "node:child_process"
 import { parseFrontmatter } from "./parse-frontmatter.js"
@@ -259,8 +259,8 @@ function syncAgentsExclude(projectRoot: string, log: (msg: string) => void) {
     let next = lines
     let changed = false
 
-    if (!has(".engram-*")) {
-      next = [...next, "# Engram internal files", ".engram-*"]
+    if (!has(".opencode/")) {
+      next = [...next, "# Engram extracted files", ".opencode/"]
       changed = true
     }
 
@@ -415,14 +415,16 @@ Arguments: $ARGUMENTS`,
   },
 }
 
-/** Writes learn, review-loop, and coach command .md files to target/command/. Always overwrites. */
+/** Writes learn, review-loop, and coach command .md files to target/commands/. Always overwrites. Removes legacy target/command/ if present. */
 function generateCommands(target: string, log: (msg: string) => void) {
-  const commandsDir = resolve(target, "command")
+  const commandsDir = resolve(target, "commands")
   mkdirSync(commandsDir, { recursive: true })
   for (const [name, def] of Object.entries(COMMANDS_DEF)) {
     const content = `---\ndescription: ${def.description}\n---\n\n${def.template.trimEnd()}\n`
     writeFileSync(resolve(commandsDir, `${name}.md`), content)
   }
+  const legacyDir = resolve(target, "command")
+  if (existsSync(legacyDir)) rmSync(legacyDir, { recursive: true })
   log(`Engram: generated commands to ${commandsDir}`)
 }
 

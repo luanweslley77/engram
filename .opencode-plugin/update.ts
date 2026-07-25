@@ -29,7 +29,7 @@ import { writeUpdateDiff } from "./diff.js"
 const SKILLS_DIR = "skills"
 const AGENTS_DIR = "agents"
 const SCRIPTS_DIR = "scripts"
-const COMMANDS_DIR = "command"
+const COMMANDS_DIR = "commands"
 
 /** Tracks files per category: added (new on disk), skipped (preserved, needs user decision). */
 export interface DiffEntry {
