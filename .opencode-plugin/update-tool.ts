@@ -11,7 +11,7 @@
  * enabled/disabled via cfg.tools["engram_update"] in the config hook, using
  * the same existsSync gate as the /engram-update pseudo-command.
  *
- * When the manifest is resolved and deleted, cfg.tools["engram_update"] = false
+ * When the manifest is resolved and deleted, cfg.tools["engram_update"] = false + cfg.permission["engram_update"] = "deny"
  * hides the tool from the LLM on the next session.
  *
  * --- Modes ---
@@ -55,7 +55,7 @@
  *   → tool processes files, deletes manifest + version guard
  *   → next reload:
  *       existsSync → false → pseudo-command gone
- *       cfg.tools["engram_update"] = false → tool hidden
+ *       cfg.tools["engram_update"] = false + cfg.permission["engram_update"] = "deny" → tool hidden
  *       .engram-version.jsonc deleted → selfExtract treats as fresh install
  *       copyMissing with existsSync guard → user edits preserved
  *

@@ -365,7 +365,10 @@ export const server: Plugin = async ({ client, $, directory }) => {
         }
       }
       cfg.tools = cfg.tools || {}
-      cfg.tools["engram_update"] = existsSync(resolve(target, ".engram-update.jsonc"))
+      const hasUpdate = existsSync(resolve(target, ".engram-update.jsonc"))
+      cfg.tools["engram_update"] = hasUpdate
+      cfg.permission = cfg.permission || {}
+      cfg.permission["engram_update"] = hasUpdate ? "allow" : "deny"
       } catch {}
     },
     tool: {
